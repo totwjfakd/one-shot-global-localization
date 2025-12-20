@@ -3,6 +3,8 @@
   <group ns="$(arg namespace)">
 
     <node pkg="cbgl" type="cbgl_node" name="cbgl_node" output="screen">
+      <param name="pkg_name"   type="string" value="CBGL" />
+
       <!-- General parameters -->
       <rosparam command="load" file="$(find cbgl)/configuration_files/params_cbgl.yaml" />
 

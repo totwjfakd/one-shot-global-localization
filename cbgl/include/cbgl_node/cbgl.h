@@ -70,6 +70,9 @@ class CBGL
     ros::NodeHandle nh_;
     ros::NodeHandle nh_private_;
 
+    /* Name of this package */
+    std::string PKG_NAME;
+
     /* subscribers */
     ros::Subscriber scan_subscriber_;
     ros::Subscriber map_subscriber_;

@@ -40,6 +40,9 @@ CBGL::CBGL(
   map_hgt_(0.0),
   top_k_caers_(10)
 {
+  nh_private_.param<std::string>("pkg_name", PKG_NAME, "CBGL");
+  ROS_INFO("[%s] Initialising ...", PKG_NAME.c_str());
+
   /* initialise needed parameters */
   initParams();
 
@@ -99,7 +102,10 @@ CBGL::CBGL(
       ros::this_node::getName() + "/" + global_localisation_service_name_,
       &CBGL::startSignalService, this);
 
-  ROS_INFO("[CBGL] BORN READY");
+  ROS_INFO("[%s] Inititialised.",                      PKG_NAME.c_str());
+  ROS_INFO("[%s] To execute global localization issue",PKG_NAME.c_str());
+  ROS_INFO("%*s rosservice call %s", (int)(PKG_NAME.size()+2),"",
+    (ros::this_node::getName()+"/"+global_localisation_service_name_).c_str());
 }
 
 /*******************************************************************************
@@ -108,7 +114,22 @@ CBGL::CBGL(
  */
 CBGL::~CBGL()
 {
-  ROS_INFO("[CBGL] Destroying CBGL");
+  if (r2rp_)
+  {
+    fftw_destroy_plan(r2rp_);
+    r2rp_ = nullptr;
+  }
+
+  if (c2rp_)
+  {
+    fftw_destroy_plan(c2rp_);
+    c2rp_ = nullptr;
+  }
+
+  /* Clean up FFTW global state */
+  fftw_cleanup();
+
+  ROS_INFO("[%s] Destroyed", PKG_NAME.c_str());
 }
 
 /*****************************************************************************
@@ -135,8 +156,8 @@ void CBGL::broadcast_global_pose_tf(
   }
   catch (tf::TransformException ex)
   {
-    ROS_WARN("[CBGL] Could not get transform from %s to %s. Error: %s",
-      odom_frame_id_.c_str(), base_frame_id_.c_str(), ex.what());
+    ROS_WARN("[%s] Could not get transform from %s to %s. Error: %s",
+      PKG_NAME.c_str(), odom_frame_id_.c_str(), base_frame_id_.c_str(), ex.what());
   }
 
   /* map <-- base */
@@ -190,7 +211,7 @@ double CBGL::caer(
   void
 CBGL::cacheFFTW3Plans(const unsigned int& sz)
 {
-  /* Create forward  plan */
+  /* Create forward plan */
   double* r2r_in;
   double* r2r_out;
 
@@ -207,6 +228,12 @@ CBGL::cacheFFTW3Plans(const unsigned int& sz)
   c2r_out = (double*) fftw_malloc(sz * sizeof(double));
 
   c2rp_ = fftw_plan_dft_c2r_1d(sz, c2r_in, c2r_out, FFTW_MEASURE);
+
+  /* Free the temporary arrays */
+  fftw_free(r2r_in);
+  fftw_free(r2r_out);
+  fftw_free(c2r_in);
+  fftw_free(c2r_out);
 }
 
 /*******************************************************************************
@@ -358,7 +385,7 @@ CBGL::correctICPPose(
   else
   {
     /* icp has failed: the icp-corrected pose falls back to the amcl pose */
-    ROS_ERROR("[CBGL] ICP has failed; falling back to amcl pose");
+    ROS_ERROR("[%s] ICP has failed; falling back to amcl pose", PKG_NAME.c_str());
   }
 }
 
@@ -576,7 +603,7 @@ CBGL::getBaseToLaserTf(const std::string& frame_id)
   }
   catch (tf::TransformException ex)
   {
-    ROS_WARN("[CBGL] Could not get initial transform from");
+    ROS_WARN("[%s] Could not get initial transform from", PKG_NAME.c_str());
     ROS_WARN("base frame to %s: %s", frame_id.c_str(), ex.what());
 
     return false;
@@ -626,14 +653,14 @@ CBGL::handleInputPose(const geometry_msgs::Pose::Ptr& pose_msg,
   /* Return if the pose received from amcl contains nan's */
   if (nanInPose(pose_msg))
   {
-    ROS_ERROR("[CBGL] pose contains nan's; aborting ...");
+    ROS_ERROR("[%s] pose contains nan's; aborting ...", PKG_NAME.c_str());
     return;
   }
 
   /* Bail if already running */
   if (running_)
   {
-    ROS_ERROR("[CBGL] Already running; aborting ...");
+    ROS_ERROR("[%s] Already running; aborting ...", PKG_NAME.c_str());
     return;
   }
 
@@ -664,83 +691,83 @@ CBGL::initParams()
   if (!nh_private_.getParam("base_frame_id", base_frame_id_))
   {
     base_frame_id_ = "base_footprint";
-    ROS_ERROR("[CBGL] base_frame_id");
+    ROS_ERROR("[%s] base_frame_id", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("fixed_frame_id", fixed_frame_id_))
   {
     fixed_frame_id_ = "map";
-    ROS_ERROR("[CBGL] fixed_frame_id");
+    ROS_ERROR("[%s] fixed_frame_id", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("odom_frame_id", odom_frame_id_))
   {
     odom_frame_id_ = "odom";
-    ROS_ERROR("[CBGL] odom_frame_id");
+    ROS_ERROR("[%s] odom_frame_id", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("tf_broadcast", tf_broadcast_))
   {
     tf_broadcast_ = false;
-    ROS_ERROR("[CBGL] tf_broadcast");
+    ROS_ERROR("[%s] tf_broadcast", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("scan_topic", scan_topic_))
   {
     scan_topic_ = "/front_laser/scan";
-    ROS_ERROR("[CBGL] scan_topic");
+    ROS_ERROR("[%s] scan_topic", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("map_topic", map_topic_))
   {
     map_topic_ = "/map";
-    ROS_ERROR("[CBGL] map_topic");
+    ROS_ERROR("[%s] map_topic", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("output_pose_topic", output_pose_topic_))
   {
     output_pose_topic_ = "/initialpose";
-    ROS_ERROR("[CBGL] output_pose_topic");
+    ROS_ERROR("[%s] output_pose_topic", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("dl", dl_))
   {
     dl_ = 40;
-    ROS_ERROR("[CBGL] param dl");
+    ROS_ERROR("[%s] param dl", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("da", da_))
   {
     da_ = 32;
-    ROS_ERROR("[CBGL] param da");
+    ROS_ERROR("[%s] param da", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("top_k_caers", top_k_caers_))
   {
     top_k_caers_ = 10;
-    ROS_ERROR("[CBGL] top_k_caers");
+    ROS_ERROR("[%s] top_k_caers", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("map_scan_method", map_scan_method_))
   {
     map_scan_method_ = "vanilla";
-    ROS_ERROR("[CBGL] map_scan_method");
+    ROS_ERROR("[%s] map_scan_method", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("publish_pose_sets", publish_pose_sets_))
   {
     publish_pose_sets_ = false;
-    ROS_ERROR("[CBGL] publish_pose_sets");
+    ROS_ERROR("[%s] publish_pose_sets", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("global_localisation_service_name",
       global_localisation_service_name_))
   {
     global_localisation_service_name_ = "/global_localization";
-    ROS_ERROR("[CBGL] global_localisation_service_name");
+    ROS_ERROR("[%s] global_localisation_service_name", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("laser_z_orientation", laser_z_orientation_))
   {
     laser_z_orientation_ = "upwards";
-    ROS_ERROR("[CBGL] laser_z_orientation");
+    ROS_ERROR("[%s] laser_z_orientation", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("do_undersample_scan", do_undersample_scan_))
   {
     do_undersample_scan_ = false;
-    ROS_ERROR("[CBGL] do_undersample_scan");
+    ROS_ERROR("[%s] do_undersample_scan", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("undersample_rate", undersample_rate_))
   {
     undersample_rate_ = 1;
-    ROS_ERROR("[CBGL] undersample_rate");
+    ROS_ERROR("[%s] undersample_rate", PKG_NAME.c_str());
   }
   /*
    * The angular progression of scanning depends on how the laser is mounted
@@ -754,7 +781,7 @@ CBGL::initParams()
     sgn_ = 1;
   else
   {
-    ROS_ERROR("[CBGL] Please provide a valid value");
+    ROS_ERROR("[%s] Please provide a valid value", PKG_NAME.c_str());
     ROS_ERROR("       for param laser_z_orientation");
   }
 
@@ -767,119 +794,119 @@ CBGL::initParams()
   if (!nh_private_.getParam ("max_angular_correction_deg", input_.max_angular_correction_deg))
   {
     input_.max_angular_correction_deg = 45.0;
-    ROS_ERROR("[CBGL] max_angular_correction_deg");
+    ROS_ERROR("[%s] max_angular_correction_deg", PKG_NAME.c_str());
   }
 
   /* Maximum translation between scans (m) */
   if (!nh_private_.getParam ("max_linear_correction", input_.max_linear_correction))
   {
     input_.max_linear_correction = 0.50;
-    ROS_ERROR("[CBGL] max_linear_correction");
+    ROS_ERROR("[%s] max_linear_correction", PKG_NAME.c_str());
   }
 
   /* Maximum ICP cycle iterations */
   if (!nh_private_.getParam ("max_iterations", input_.max_iterations))
   {
     input_.max_iterations = 10;
-    ROS_ERROR("[CBGL] max_iterations");
+    ROS_ERROR("[%s] max_iterations", PKG_NAME.c_str());
   }
 
   /* A threshold for stopping (m) */
   if (!nh_private_.getParam ("epsilon_xy", input_.epsilon_xy))
   {
     input_.epsilon_xy = 0.000001;
-    ROS_ERROR("[CBGL] epsilon_xy");
+    ROS_ERROR("[%s] epsilon_xy", PKG_NAME.c_str());
   }
 
   /* A threshold for stopping (rad) */
   if (!nh_private_.getParam ("epsilon_theta", input_.epsilon_theta))
   {
     input_.epsilon_theta = 0.000001;
-    ROS_ERROR("[CBGL] epsilon_theta");
+    ROS_ERROR("[%s] epsilon_theta", PKG_NAME.c_str());
   }
 
   /* Maximum distance for a correspondence to be valid */
   if (!nh_private_.getParam ("max_correspondence_dist", input_.max_correspondence_dist))
   {
     input_.max_correspondence_dist = 0.3;
-    ROS_ERROR("[CBGL] max_correspondence_dist");
+    ROS_ERROR("[%s] max_correspondence_dist", PKG_NAME.c_str());
   }
 
   /* Noise in the scan (m) */
   if (!nh_private_.getParam ("sigma", input_.sigma))
   {
     input_.sigma = 0.010;
-    ROS_ERROR("[CBGL] sigma");
+    ROS_ERROR("[%s] sigma", PKG_NAME.c_str());
   }
 
   /* Use smart tricks for finding correspondences. */
   if (!nh_private_.getParam ("use_corr_tricks", input_.use_corr_tricks))
   {
     input_.use_corr_tricks = 1;
-    ROS_ERROR("[CBGL] use_corr_tricks");
+    ROS_ERROR("[%s] use_corr_tricks", PKG_NAME.c_str());
   }
 
   /* Restart: Restart if error is over threshold */
   if (!nh_private_.getParam ("restart", input_.restart))
   {
     input_.restart = 0;
-    ROS_ERROR("[CBGL] restart");
+    ROS_ERROR("[%s] restart", PKG_NAME.c_str());
   }
 
   /* Restart: Threshold for restarting */
   if (!nh_private_.getParam ("restart_threshold_mean_error", input_.restart_threshold_mean_error))
   {
     input_.restart_threshold_mean_error = 0.01;
-    ROS_ERROR("[CBGL] restart_threshold_mean_error");
+    ROS_ERROR("[%s] restart_threshold_mean_error", PKG_NAME.c_str());
   }
 
   /* Restart: displacement for restarting. (m) */
   if (!nh_private_.getParam ("restart_dt", input_.restart_dt))
   {
     input_.restart_dt = 1.0;
-    ROS_ERROR("[CBGL] restart_dt");
+    ROS_ERROR("[%s] restart_dt", PKG_NAME.c_str());
   }
 
   /* Restart: displacement for restarting. (rad) */
   if (!nh_private_.getParam ("restart_dtheta", input_.restart_dtheta))
   {
     input_.restart_dtheta = 0.1;
-    ROS_ERROR("[CBGL] restart_dtheta");
+    ROS_ERROR("[%s] restart_dtheta", PKG_NAME.c_str());
   }
 
   /* Max distance for staying in the same clustering */
   if (!nh_private_.getParam ("clustering_threshold", input_.clustering_threshold))
   {
     input_.clustering_threshold = 0.25;
-    ROS_ERROR("[CBGL] clustering_threshold");
+    ROS_ERROR("[%s] clustering_threshold", PKG_NAME.c_str());
   }
 
   /* Number of neighbour rays used to estimate the orientation */
   if (!nh_private_.getParam ("orientation_neighbourhood", input_.orientation_neighbourhood))
   {
     input_.orientation_neighbourhood = 20;
-    ROS_ERROR("[CBGL] orientation_neighbourhood");
+    ROS_ERROR("[%s] orientation_neighbourhood", PKG_NAME.c_str());
   }
 
   /* If 0, it's vanilla ICP */
   if (!nh_private_.getParam ("use_point_to_line_distance", input_.use_point_to_line_distance))
   {
     input_.use_point_to_line_distance = 1;
-    ROS_ERROR("[CBGL] use_point_to_line_distance");
+    ROS_ERROR("[%s] use_point_to_line_distance", PKG_NAME.c_str());
   }
 
   /* Discard correspondences based on the angles */
   if (!nh_private_.getParam ("do_alpha_test", input_.do_alpha_test))
   {
     input_.do_alpha_test = 0;
-    ROS_ERROR("[CBGL] do_alpha_test");
+    ROS_ERROR("[%s] do_alpha_test", PKG_NAME.c_str());
   }
 
   /* Discard correspondences based on the angles - threshold angle, in degrees */
   if (!nh_private_.getParam ("do_alpha_test_thresholdDeg", input_.do_alpha_test_thresholdDeg))
   {
     input_.do_alpha_test_thresholdDeg = 20.0;
-    ROS_ERROR("[CBGL] do_alpha_test_thresholdDeg");
+    ROS_ERROR("[%s] do_alpha_test_thresholdDeg", PKG_NAME.c_str());
   }
 
   /*
@@ -889,7 +916,7 @@ CBGL::initParams()
   if (!nh_private_.getParam ("outliers_maxPerc", input_.outliers_maxPerc))
   {
     input_.outliers_maxPerc = 0.90;
-    ROS_ERROR("[CBGL] outliers_maxPerc");
+    ROS_ERROR("[%s] outliers_maxPerc", PKG_NAME.c_str());
   }
 
   /*
@@ -905,13 +932,13 @@ CBGL::initParams()
   if (!nh_private_.getParam ("outliers_adaptive_order", input_.outliers_adaptive_order))
   {
     input_.outliers_adaptive_order = 0.7;
-    ROS_ERROR("[CBGL] outliers_adaptive_order");
+    ROS_ERROR("[%s] outliers_adaptive_order", PKG_NAME.c_str());
   }
 
   if (!nh_private_.getParam ("outliers_adaptive_mult", input_.outliers_adaptive_mult))
   {
     input_.outliers_adaptive_mult = 2.0;
-    ROS_ERROR("[CBGL] outliers_adaptive_mult");
+    ROS_ERROR("[%s] outliers_adaptive_mult", PKG_NAME.c_str());
   }
 
   /*
@@ -923,28 +950,28 @@ CBGL::initParams()
   if (!nh_private_.getParam ("do_visibility_test", input_.do_visibility_test))
   {
     input_.do_visibility_test = 0;
-    ROS_ERROR("[CBGL] do_visibility_test");
+    ROS_ERROR("[%s] do_visibility_test", PKG_NAME.c_str());
   }
 
   /* no two points in laser_sens can have the same corr. */
   if (!nh_private_.getParam ("outliers_remove_doubles", input_.outliers_remove_doubles))
   {
     input_.outliers_remove_doubles = 1;
-    ROS_ERROR("[CBGL] outliers_remove_doubles");
+    ROS_ERROR("[%s] outliers_remove_doubles", PKG_NAME.c_str());
   }
 
   /* If 1, computes the covariance of ICP using the method http://purl.org/censi/2006/icpcov */
   if (!nh_private_.getParam ("do_compute_covariance", input_.do_compute_covariance))
   {
     input_.do_compute_covariance = 0;
-    ROS_ERROR("[CBGL] do_compute_covariance");
+    ROS_ERROR("[%s] do_compute_covariance", PKG_NAME.c_str());
   }
 
   /* Checks that find_correspondences_tricks gives the right answer */
   if (!nh_private_.getParam ("debug_verify_tricks", input_.debug_verify_tricks))
   {
     input_.debug_verify_tricks = 0;
-    ROS_ERROR("[CBGL] debug_verify_tricks");
+    ROS_ERROR("[%s] debug_verify_tricks", PKG_NAME.c_str());
   }
 
   /*
@@ -954,7 +981,7 @@ CBGL::initParams()
   if (!nh_private_.getParam ("use_ml_weights", input_.use_ml_weights))
   {
     input_.use_ml_weights = 0;
-    ROS_ERROR("[CBGL] use_ml_weights");
+    ROS_ERROR("[%s] use_ml_weights", PKG_NAME.c_str());
   }
 
   /*
@@ -964,23 +991,23 @@ CBGL::initParams()
   if (!nh_private_.getParam ("use_sigma_weights", input_.use_sigma_weights))
   {
     input_.use_sigma_weights = 0;
-    ROS_ERROR("[CBGL] use_sigma_weights");
+    ROS_ERROR("[%s] use_sigma_weights", PKG_NAME.c_str());
   }
 
   if (!nh_private_.getParam ("gpm_theta_bin_size_deg", input_.gpm_theta_bin_size_deg))
   {
     input_.gpm_theta_bin_size_deg = 5;
-    ROS_ERROR("[CBGL] gpm_theta_bin_size_deg");
+    ROS_ERROR("[%s] gpm_theta_bin_size_deg", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam ("gpm_extend_range_deg", input_.gpm_extend_range_deg))
   {
     input_.gpm_extend_range_deg = 15;
-    ROS_ERROR("[CBGL] gpm_extend_range_deg");
+    ROS_ERROR("[%s] gpm_extend_range_deg", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam ("gpm_interval", input_.gpm_interval))
   {
     input_.gpm_interval = 1;
-    ROS_ERROR("[CBGL] gpm_interval");
+    ROS_ERROR("[%s] gpm_interval", PKG_NAME.c_str());
   }
 
   if (!nh_private_.getParam ("initial_cov_xx", initial_cov_xx_))
@@ -993,12 +1020,12 @@ CBGL::initParams()
   if (!nh_private_.getParam("do_icp", do_icp_))
   {
     do_icp_ = true;
-    ROS_ERROR("[CBGL] do_icp");
+    ROS_ERROR("[%s] do_icp", PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("do_fsm", do_fsm_))
   {
     do_fsm_ = false;
-    ROS_ERROR("[CBGL] do_fsm");
+    ROS_ERROR("[%s] do_fsm", PKG_NAME.c_str());
   }
 
   /* FSM Params */
@@ -1006,7 +1033,7 @@ CBGL::initParams()
   /* ------------------------------------------------------------------------ */
   if (!nh_private_.getParam ("num_iterations", int_param))
   {
-    ROS_WARN("[CBGL] no num_iterations param found; resorting to defaults");
+    ROS_WARN("[%s] no num_iterations param found; resorting to defaults", PKG_NAME.c_str());
     ip_.num_iterations = 2;
   }
   else
@@ -1015,21 +1042,21 @@ CBGL::initParams()
   /* ------------------------------------------------------------------------ */
   if (!nh_private_.getParam ("xy_bound", ip_.xy_bound))
   {
-    ROS_WARN("[CBGL] no xy_bound param found; resorting to defaults");
+    ROS_WARN("[%s] no xy_bound param found; resorting to defaults", PKG_NAME.c_str());
     ip_.xy_bound = 0.2;
   }
 
   /* ------------------------------------------------------------------------ */
   if (!nh_private_.getParam ("t_bound", ip_.t_bound))
   {
-    ROS_WARN("[CBGL] no t_bound param found; resorting to defaults");
+    ROS_WARN("[%s] no t_bound param found; resorting to defaults", PKG_NAME.c_str());
     ip_.t_bound = M_PI/4;
   }
 
   /* ------------------------------------------------------------------------ */
   if (!nh_private_.getParam ("max_counter", int_param))
   {
-    ROS_WARN("CBGL] no max_counter param found; resorting to defaults");
+    ROS_WARN("[%s] no max_counter param found; resorting to defaults", PKG_NAME.c_str());
     ip_.max_counter = 200;
   }
   else
@@ -1038,7 +1065,8 @@ CBGL::initParams()
   /* ------------------------------------------------------------------------ */
   if (!nh_private_.getParam ("min_magnification_size", int_param))
   {
-    ROS_WARN("CBGL] no min_magnification_size param found; resorting to defaults");
+    ROS_WARN("[%s] no min_magnification_size param found; resorting to defaults",
+      PKG_NAME.c_str());
     ip_.min_magnification_size = 0;
   }
   else
@@ -1047,7 +1075,8 @@ CBGL::initParams()
   /* ------------------------------------------------------------------------ */
   if (!nh_private_.getParam ("max_magnification_size", int_param))
   {
-    ROS_WARN("CBGL] no max_magnification_size param found; resorting to defaults");
+    ROS_WARN("[%s] no max_magnification_size param found; resorting to defaults",
+      PKG_NAME.c_str());
     ip_.max_magnification_size = 3;
   }
   else
@@ -1056,7 +1085,7 @@ CBGL::initParams()
   /* ------------------------------------------------------------------------ */
   if (!nh_private_.getParam ("max_recoveries", int_param))
   {
-    ROS_WARN("[CBGL] no max_recoveries param found; resorting to defaults");
+    ROS_WARN("[%s] no max_recoveries param found; resorting to defaults", PKG_NAME.c_str());
     ip_.max_recoveries = 10;
   }
   else
@@ -1444,8 +1473,8 @@ CBGL::poseCloudCallback(
     dispersed_particles_.push_back(pose_i);
   }
 
-  ROS_INFO("[CBGL] There are %zux%d particles in total",
-    dispersed_particles_.size(), da_);
+  ROS_INFO("[%s] There are %zux%d particles in total",
+    PKG_NAME.c_str(), dispersed_particles_.size(), da_);
 
   /* Process cloud if all other conditions are satisfied */
   received_pose_cloud_ = true;
@@ -1492,7 +1521,7 @@ void CBGL::processPoseCloud()
   std::vector<geometry_msgs::Pose::Ptr> caer_best_particles =
     siftThroughCAERPanoramic(dispersed_particles_);
 
-  ROS_INFO("[CBGL] I will consider only %zu hypotheses",
+  ROS_INFO("[%s] I will consider only %zu hypotheses", PKG_NAME.c_str(),
     caer_best_particles.size());
 
   /* Publish top caer hypotheses */
@@ -1516,7 +1545,7 @@ void CBGL::processPoseCloud()
   for (int i = 0; i < caer_best_particles.size(); i++)
   {
     ROS_INFO(
-      "[CBGL] Processing hypothesis %d: (x,y,t) = (%f,%f,%f)", i,
+      "[%s] Processing hypothesis %d: (x,y,t) = (%f,%f,%f)", PKG_NAME.c_str(), i,
       caer_best_particles[i]->position.x,
       caer_best_particles[i]->position.y,
       extractYawFromPose(*caer_best_particles[i]));
@@ -1556,9 +1585,9 @@ void CBGL::processPoseCloud()
     }
   }
 
-  ROS_INFO("[CBGL] ---------------------");
-  ROS_INFO("[CBGL] Best hypothesis id = %d", score_idx);
-  ROS_INFO("[CBGL] ---------------------");
+  ROS_INFO("[%s] ---------------------",   PKG_NAME.c_str());
+  ROS_INFO("[%s] Best hypothesis id = %d", PKG_NAME.c_str(), score_idx);
+  ROS_INFO("[%s] ---------------------",   PKG_NAME.c_str());
 
   /*
    * At this point what we have identified is the particle from whose pose
@@ -1572,14 +1601,15 @@ void CBGL::processPoseCloud()
   {
     correctICPPose(global_pose, f2bs[score_idx]);
 
-    ROS_INFO("[CBGL] Pose found: (%f,%f,%f)",
+    ROS_INFO("[%s] Pose found: (%f,%f,%f)",
+      PKG_NAME.c_str(),
       global_pose->position.x,
       global_pose->position.y,
       extractYawFromPose(*global_pose));
     ROS_INFO("--------------------------------------------------------------------------");
   }
   else
-    ROS_ERROR("[CBGL] No valid pose found");
+    ROS_ERROR("[%s] No valid pose found", PKG_NAME.c_str());
 
   /* Publish execution time */
   measureExecutionTime(start, ros::Time::now());
@@ -1687,7 +1717,7 @@ CBGL::processScan(LDP& world_scan_ldp, LDP& map_scan_ldp,
   else
   {
     f2b_.setIdentity();
-    ROS_WARN("[CBGL] Error in scan matching");
+    ROS_WARN("[%s] Error in scan matching", PKG_NAME.c_str());
   }
 
   *output = output_;
@@ -1695,7 +1725,7 @@ CBGL::processScan(LDP& world_scan_ldp, LDP& map_scan_ldp,
 
   /* statistics */
   double dur = (ros::WallTime::now() - start).toSec() * 1e3;
-  ROS_DEBUG("[CBGL] Scan matcher total duration: %.1f ms", dur);
+  ROS_DEBUG("[%s] Scan matcher total duration: %.1f ms", PKG_NAME.c_str(), dur);
 }
 
 /*******************************************************************************
@@ -1779,7 +1809,7 @@ CBGL::scanCallback(
     {
       if (!getBaseToLaserTf(s_->header.frame_id))
       {
-        ROS_WARN("[CBGL] Skipping scan");
+        ROS_WARN("[%s] Skipping scan", PKG_NAME.c_str());
         return;
       }
     }
@@ -1872,7 +1902,7 @@ CBGL::scanMap(
       sgn = 1;
     else
     {
-      ROS_ERROR("[CBGL] Please provide a valid value");
+      ROS_ERROR("[%s] Please provide a valid value", PKG_NAME.c_str());
       ROS_ERROR("       for param laser_z_orientation");
     }
 
@@ -1986,7 +2016,7 @@ CBGL::scanMapPanoramic(
       sgn = 1;
     else
     {
-      ROS_ERROR("[CBGL] Please provide a valid value");
+      ROS_ERROR("[%s] Please provide a valid value", PKG_NAME.c_str());
       ROS_ERROR("       for param laser_z_orientation");
     }
 
@@ -2161,12 +2191,12 @@ CBGL::startSignalService(
 
   if (!received_map_)
   {
-    ROS_WARN("[CBGL] Map not received yet, returning ...");
+    ROS_WARN("[%s] Map not received yet, returning ...", PKG_NAME.c_str());
     return false;
   }
 
   ROS_INFO("--------------------------------------------------------------------------");
-  ROS_INFO("[CBGL] Initializing with uniform distribution over map");
+  ROS_INFO("[%s] Initializing with uniform distribution over map", PKG_NAME.c_str());
   pf_init_model(pf_hyp_, (pf_init_model_fn_t)CBGL::uniformPoseGenerator,
     (void *)map_hyp_);
 
@@ -2208,7 +2238,7 @@ CBGL::startSignalService(
   /* ... which is handled here. This used to be a callback and the name stuck. */
   poseCloudCallback(pose_cloud_msg);
 
-  ROS_INFO("[CBGL] Global initialisation done!");
+  ROS_INFO("[%s] Global initialisation done!", PKG_NAME.c_str());
   ROS_INFO("----------------------------------");
 
   received_start_signal_ = true;
@@ -2233,7 +2263,6 @@ CBGL::uniformPoseGenerator(void* arg)
 
   pf_vector_t p;
 
-  ROS_DEBUG("[CBGL] Generating new uniform sample");
   for(;;)
   {
     p.v[0] = min_x + drand48() * (max_x - min_x);
