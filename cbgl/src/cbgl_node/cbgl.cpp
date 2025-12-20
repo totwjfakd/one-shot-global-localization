@@ -24,6 +24,7 @@ CBGL::CBGL(
   received_pose_cloud_(false),
   received_start_signal_(false),
   running_(false),
+  cachedFFTW3Plans_(false),
   do_icp_(true),
   do_fsm_(false),
   omap_(ranges::OMap(1,1)),
@@ -114,20 +115,24 @@ CBGL::CBGL(
  */
 CBGL::~CBGL()
 {
-  if (r2rp_)
+  if (cachedFFTW3Plans_ == true)
   {
-    fftw_destroy_plan(r2rp_);
-    r2rp_ = nullptr;
-  }
+    /* Clean up FFTW plans */
+    if (r2rp_)
+    {
+      fftw_destroy_plan(r2rp_);
+      r2rp_ = nullptr;
+    }
 
-  if (c2rp_)
-  {
-    fftw_destroy_plan(c2rp_);
-    c2rp_ = nullptr;
-  }
+    if (c2rp_)
+    {
+      fftw_destroy_plan(c2rp_);
+      c2rp_ = nullptr;
+    }
 
-  /* Clean up FFTW global state */
-  fftw_cleanup();
+    /* Clean up FFTW global state */
+    fftw_cleanup();
+  }
 
   ROS_INFO("[%s] Destroyed", PKG_NAME.c_str());
 }
@@ -234,6 +239,8 @@ CBGL::cacheFFTW3Plans(const unsigned int& sz)
   fftw_free(r2r_out);
   fftw_free(c2r_in);
   fftw_free(c2r_out);
+
+  cachedFFTW3Plans_ = true;
 }
 
 /*******************************************************************************
@@ -1789,8 +1796,6 @@ CBGL::scanCallback(
     if (!std::isfinite(s_->ranges[i]))
       latest_world_scan_->ranges[i] = 0;
   }
-
-
   /* What's the lowest range? */
   double latest_world_scan_min_range_now =
     *min_element(s_->ranges.begin(), s_->ranges.end());

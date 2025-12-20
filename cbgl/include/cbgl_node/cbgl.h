@@ -73,6 +73,9 @@ class CBGL
     /* Name of this package */
     std::string PKG_NAME;
 
+    /* Cached fftw plans? */
+    bool cachedFFTW3Plans_;
+
     /* subscribers */
     ros::Subscriber scan_subscriber_;
     ros::Subscriber map_subscriber_;
