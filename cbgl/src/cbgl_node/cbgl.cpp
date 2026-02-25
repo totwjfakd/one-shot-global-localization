@@ -2165,12 +2165,13 @@ CBGL::siftThroughCAERPanoramic(
    * all_hypotheses_publisher_.publish(pa1);
    */
 
-  /* Sort all caers and get the original indices of all sorted caer values */
+  /* Partially sort caer indices: move the top_k_caers_ smallest to the front */
   std::vector<size_t> idx(caers.size());
   std::iota(idx.begin(), idx.end(), 0);
 
-  std::stable_sort(
+  std::nth_element(
     idx.begin(),
+    idx.begin() + top_k_caers_,
     idx.end(),
     [&caers](size_t i1,size_t i2) {return caers[i1] < caers[i2];});
 
