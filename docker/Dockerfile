@@ -37,7 +37,7 @@ USER ${USER}
 WORKDIR /home/${USER}
 # ------------------------------------------------------------------------------
 RUN mkdir -p /home/${USER}/catkin_ws/src
-COPY --chown=${USER}:${USER} ../cbgl/ /home/${USER}/catkin_ws/src/cbgl/
+COPY --chown=${USER}:${USER} cbgl/ /home/${USER}/catkin_ws/src/cbgl/
 RUN rosdep update
 # ------------------------------------------------------------------------------
 RUN cd /home/${USER}/catkin_ws                                              && \
