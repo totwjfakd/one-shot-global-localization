@@ -40,41 +40,32 @@ SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-c"]
 
 
 ###########################
-# 1.) Bring system up to the latest ROS desktop configuration
+# 1.) Minimal ROS2 install (base + common msgs + RMW) + ROS1 apt prep
+#     - Replaces ros-humble-desktop with a minimal, bridge-focused set.
+#     - Base image already has ros-humble-ros-base.
 ###########################
-RUN apt-get -y update
-RUN apt-get -y upgrade
-RUN apt-get -y install ros-humble-desktop
-
-###########################
-# 2.) Temporarily remove ROS2 apt repository
-###########################
-RUN mv /etc/apt/sources.list.d/ros2.sources /root/
-RUN apt-get update
-
-###########################
-# 3.) comment out the catkin conflict
-###########################
-RUN sed  -i -e 's|^Conflicts: catkin|#Conflicts: catkin|' /var/lib/dpkg/status
-RUN apt-get install -f
-
-###########################
-# 4.) force install these packages
-###########################
-RUN apt-get download python3-catkin-pkg
-RUN apt-get download python3-rospkg
-RUN apt-get download python3-rosdistro
-RUN dpkg --force-overwrite -i python3-catkin-pkg*.deb
-RUN dpkg --force-overwrite -i python3-rospkg*.deb
-RUN dpkg --force-overwrite -i python3-rosdistro*.deb
-RUN apt-get install -f
+RUN apt-get -y update \
+ && apt-get -y upgrade \
+ && apt-get -y install --no-install-recommends \
+      ros-humble-common-interfaces \
+      ros-humble-rmw-fastrtps-cpp \
+ && mv /etc/apt/sources.list.d/ros2.sources /root/ \
+ && apt-get update \
+ && sed -i -e 's|^Conflicts: catkin|#Conflicts: catkin|' /var/lib/dpkg/status \
+ && apt-get -y install -f \
+ && apt-get download python3-catkin-pkg python3-rospkg python3-rosdistro \
+ && dpkg --force-overwrite -i python3-catkin-pkg*.deb \
+ && dpkg --force-overwrite -i python3-rospkg*.deb \
+ && dpkg --force-overwrite -i python3-rosdistro*.deb \
+ && rm -f python3-catkin-pkg*.deb python3-rospkg*.deb python3-rosdistro*.deb \
+ && apt-get -y install -f
 
 ###########################
 # 5.) Install the latest ROS1 desktop configuration
 # see https://packages.ubuntu.com/jammy/ros-desktop-dev
 # note: ros-desktop-dev automatically includes tf tf2
 ###########################
-RUN apt-get -y install ros-desktop-dev
+RUN apt-get -y install ros-desktop-dev libgl1-mesa-dev libglu1-mesa-dev
 
 # fix ARM64 pkgconfig path issue -- Fix provided by ambrosekwok
 RUN if [[ $(uname -m) = "arm64" || $(uname -m) = "aarch64" ]]; then                     \
@@ -90,7 +81,7 @@ RUN mv /root/ros2.sources /etc/apt/sources.list.d/
 RUN apt-get -y update
 
 # for ros-humble-example-interfaces:
-ARG ADD_ros_tutorials=1
+ARG ADD_ros_tutorials=0
 
 # for ros-humble-grid-map:
 ARG ADD_grid_map=0
@@ -302,9 +293,10 @@ RUN                                                                             
       --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 ###########################
-# 8.) Clean up
+# 8.) Clean up apt caches to shrink image size
 ###########################
-RUN apt-get -y clean all; apt-get -y update
+RUN apt-get -y clean \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
 
 ###########################
 # 9.) Pack all ROS1 dependent libraries
