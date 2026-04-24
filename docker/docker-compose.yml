@@ -14,3 +14,26 @@ services:
     user: cbgl
     volumes:
       - ../cbgl:/home/cbgl/catkin_ws/src/cbgl/:rw
+
+  ros1_bridge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.bridge
+
+    image: ros1-bridge:local
+    container_name: ros1_bridge
+
+    stdin_open: true
+    tty: true
+    network_mode: "host"
+    ipc: host
+    environment:
+      - ROS_MASTER_URI=http://127.0.0.1:11311
+      - ROS_HOSTNAME=127.0.0.1
+      - ROS_IP=127.0.0.1
+      - ROS_DOMAIN_ID=42
+      - ROS_LOCALHOST_ONLY=1
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+    depends_on:
+      - cbgl
+    restart: on-failure
