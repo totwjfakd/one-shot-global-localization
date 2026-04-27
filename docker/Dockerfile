@@ -48,6 +48,10 @@ RUN cd /home/${USER}/catkin_ws                                              && \
     source /opt/ros/kinetic/setup.bash                                      && \
     catkin build cbgl
 # ------------------------------------------------------------------------------
+# Source ROS automatically for interactive shells (docker exec)
+RUN echo "source /opt/ros/kinetic/setup.bash" >> /home/${USER}/.bashrc
+RUN echo "[ -f /home/${USER}/catkin_ws/devel/setup.bash ] && source /home/${USER}/catkin_ws/devel/setup.bash" >> /home/${USER}/.bashrc
+# ------------------------------------------------------------------------------
 # The next five lines + the entrypoint command will make sure that
 # when the container is run the cbgl node is roslaunched immediately
 RUN echo "#!/bin/bash"                                      > /home/${USER}/cbgl_launch.sh

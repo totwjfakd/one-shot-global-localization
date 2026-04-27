@@ -326,11 +326,39 @@ RUN ROS1_LIBS="libxmlrpcpp.so";                                                 
      done
 
 ###########################
+# 9.5) ROS1 compatibility setup for interactive shells
+#      Ubuntu Jammy's ROS1 packages install into /usr, not /opt/ros/noetic.
+###########################
+RUN mkdir -p /opt/ros/noetic && { \
+      echo '#!/bin/bash'; \
+      echo '# Compatibility shim for Debian/Ubuntu ROS 1 packages installed under /usr.'; \
+      echo 'export ROS_VERSION=1'; \
+      echo 'export ROS_PYTHON_VERSION=3'; \
+      echo 'export ROS_DISTRO=noetic'; \
+      echo 'export ROS_ETC_DIR=${ROS_ETC_DIR:-/etc/ros}'; \
+      echo '[ -d /usr/share/ros ] && export ROS_ROOT=/usr/share/ros'; \
+      echo 'for setup in \'; \
+      echo '  /control_msgs_ros1/install/setup.bash \'; \
+      echo '  /ros_tutorials/install/setup.bash \'; \
+      echo '  /common_tutorials/install/setup.bash \'; \
+      echo '  /grid_map/install/setup.bash \'; \
+      echo '  /octomap_msgs/install/setup.bash \'; \
+      echo '  /custom_msgs/custom_msgs_ros1/install/setup.bash'; \
+      echo 'do'; \
+      echo '  [ -f "$setup" ] && source "$setup"'; \
+      echo 'done'; \
+      echo 'export ROS_VERSION=1'; \
+      echo 'export ROS_PYTHON_VERSION=3'; \
+      echo 'export ROS_DISTRO=noetic'; \
+    } > /opt/ros/noetic/setup.bash && chmod +x /opt/ros/noetic/setup.bash
+
+###########################
 # 10.) Runtime: launch dynamic_bridge by default
 ###########################
 RUN { \
       echo '#!/bin/bash'; \
       echo 'set -e'; \
+      echo '[ -f /opt/ros/noetic/setup.bash ] && source /opt/ros/noetic/setup.bash'; \
       echo 'source /opt/ros/humble/setup.bash'; \
       echo 'if [ -f /control_msgs_ros2/install/setup.bash ]; then source /control_msgs_ros2/install/setup.bash; fi'; \
       echo 'if [ -f /custom_action/install/setup.bash ]; then source /custom_action/install/setup.bash; fi'; \
@@ -342,6 +370,7 @@ RUN { \
 # 11.) Auto-source ROS env for interactive shells (docker exec)
 ###########################
 RUN { \
+      echo '[ -f /opt/ros/noetic/setup.bash ] && source /opt/ros/noetic/setup.bash'; \
       echo 'source /opt/ros/humble/setup.bash'; \
       echo '[ -f /control_msgs_ros2/install/setup.bash ] && source /control_msgs_ros2/install/setup.bash'; \
       echo '[ -f /custom_action/install/setup.bash ] && source /custom_action/install/setup.bash'; \
@@ -349,4 +378,4 @@ RUN { \
     } >> /root/.bashrc
 
 ENTRYPOINT ["/run_bridge.sh"]
-CMD ["--bridge-all-topics"]
+CMD ["--", "--bridge-all-topics"]
