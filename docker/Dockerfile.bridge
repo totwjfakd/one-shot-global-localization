@@ -284,6 +284,12 @@ RUN                                                                             
     cd /ros-humble-ros1-bridge/src;                                                             \
     git clone -b action_bridge_humble --depth=1 https://github.com/smith-doug/ros1_bridge.git;  \
     cd ros1_bridge/;                                                                            \
+    perl -0pi -e 's/std::mutex g_bridge_mutex;\n/std::mutex g_bridge_mutex;\n\nstatic bool is_parameter_bridge_topic(const std::string \& topic_name)\n{\n  return topic_name == "\/map" || topic_name == "\/tf_static";\n}\n/' src/dynamic_bridge.cpp; \
+    perl -0pi -e 's/auto topic_name = ros1_publisher\.first;\n    std::string ros1_type_name/auto topic_name = ros1_publisher.first;\n    if (is_parameter_bridge_topic(topic_name)) {\n      continue;\n    }\n    std::string ros1_type_name/' src/dynamic_bridge.cpp; \
+    perl -0pi -e 's/auto topic_name = ros2_publisher\.first;\n    std::string ros2_type_name/auto topic_name = ros2_publisher.first;\n    if (is_parameter_bridge_topic(topic_name)) {\n      continue;\n    }\n    std::string ros2_type_name/' src/dynamic_bridge.cpp; \
+    perl -0pi -e 's/(BridgeHandles\ncreate_bidirectional_bridge\(\n  ros::NodeHandle ros1_node,\n  rclcpp::Node::SharedPtr ros2_node,\n  const std::string & ros1_type_name,\n  const std::string & ros2_type_name,\n  const std::string & topic_name,\n  size_t queue_size,\n  const rclcpp::QoS & publisher_qos\).*?ros2_type_name, topic_name, )queue_size(, ros1_type_name, topic_name, queue_size,)/$1publisher_qos$2/s' src/bridge.cpp; \
+    perl -0pi -e 's/return node\.advertise<ROS1_T>\(topic_name, queue_size, latch\);/const bool bridge_latch = latch || topic_name == "\/map" || topic_name == "\/tf_static";\n      return node.advertise<ROS1_T>(topic_name, queue_size, bridge_latch);/' include/ros1_bridge/factory.hpp; \
+    perl -0pi -e 's/connection_header->at\(key\) == "\/ros_bridge"/connection_header->at(key) == "\/ros_bridge" || connection_header->at(key) == "\/parameter_bridge" || connection_header->at(key) == "\/dynamic_bridge"/g' include/ros1_bridge/factory.hpp; \
     cd ../..;                                                                                   \
     MEMG=$(printf "%.0f" $(free -g | awk '/^Mem:/{print $2}'));                                 \
     NPROC=$(nproc);  MIN=$((MEMG<NPROC ? MEMG : NPROC));                                        \
@@ -352,18 +358,37 @@ RUN mkdir -p /opt/ros/noetic && { \
       echo 'export ROS_DISTRO=noetic'; \
     } > /opt/ros/noetic/setup.bash && chmod +x /opt/ros/noetic/setup.bash
 
+COPY docker/bridge_qos.yaml /bridge_qos.yaml
+
 ###########################
-# 10.) Runtime: launch dynamic_bridge by default
+# 10.) Runtime: launch parameter_bridge for latched topics and dynamic_bridge for the rest
 ###########################
 RUN { \
       echo '#!/bin/bash'; \
       echo 'set -e'; \
       echo '[ -f /opt/ros/noetic/setup.bash ] && source /opt/ros/noetic/setup.bash'; \
+      echo 'until rostopic list >/dev/null 2>&1; do'; \
+      echo '  echo "Waiting for ROS 1 master at ${ROS_MASTER_URI:-http://localhost:11311}..."'; \
+      echo '  sleep 1'; \
+      echo 'done'; \
+      echo 'rosparam load /bridge_qos.yaml'; \
+      echo 'unset ROS_DISTRO'; \
       echo 'source /opt/ros/humble/setup.bash'; \
       echo 'if [ -f /control_msgs_ros2/install/setup.bash ]; then source /control_msgs_ros2/install/setup.bash; fi'; \
       echo 'if [ -f /custom_action/install/setup.bash ]; then source /custom_action/install/setup.bash; fi'; \
       echo 'source /ros-humble-ros1-bridge/install/local_setup.bash'; \
-      echo 'exec ros2 run ros1_bridge dynamic_bridge "$@"'; \
+      echo 'ros2 run ros1_bridge parameter_bridge __name:=parameter_bridge &'; \
+      echo 'parameter_bridge_pid=$!'; \
+      echo 'ros2 run ros1_bridge dynamic_bridge __name:=dynamic_bridge "$@" &'; \
+      echo 'dynamic_bridge_pid=$!'; \
+      echo 'trap "kill ${parameter_bridge_pid} ${dynamic_bridge_pid} 2>/dev/null || true" EXIT INT TERM'; \
+      echo 'set +e'; \
+      echo 'wait -n "${parameter_bridge_pid}" "${dynamic_bridge_pid}"'; \
+      echo 'status=$?'; \
+      echo 'set -e'; \
+      echo 'kill "${parameter_bridge_pid}" "${dynamic_bridge_pid}" 2>/dev/null || true'; \
+      echo 'wait "${parameter_bridge_pid}" "${dynamic_bridge_pid}" 2>/dev/null || true'; \
+      echo 'exit "${status}"'; \
     } > /run_bridge.sh && chmod +x /run_bridge.sh
 
 ###########################
@@ -371,6 +396,7 @@ RUN { \
 ###########################
 RUN { \
       echo '[ -f /opt/ros/noetic/setup.bash ] && source /opt/ros/noetic/setup.bash'; \
+      echo 'unset ROS_DISTRO'; \
       echo 'source /opt/ros/humble/setup.bash'; \
       echo '[ -f /control_msgs_ros2/install/setup.bash ] && source /control_msgs_ros2/install/setup.bash'; \
       echo '[ -f /custom_action/install/setup.bash ] && source /custom_action/install/setup.bash'; \
