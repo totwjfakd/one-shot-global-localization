@@ -445,6 +445,9 @@ CBGL::doFSM(
   sensor_msgs::LaserScan::Ptr map_scan = scanMap(icp_corrected_pose,
     map_scan_method_, false);
 
+  world_scan_publisher_.publish(*latest_world_scan);
+  map_scan_publisher_.publish(*map_scan);
+
   std::tuple<double,double,double> origin;
   std::get<0>(origin) = 0.0;
   std::get<1>(origin) = 0.0;
@@ -522,6 +525,9 @@ CBGL::doICP(
   /* Obtain the map scan ... */
   sensor_msgs::LaserScan::Ptr map_scan = scanMap(icp_corrected_pose,
     map_scan_method_, false);
+
+  world_scan_publisher_.publish(*latest_world_scan);
+  map_scan_publisher_.publish(*map_scan);
 
   /* .. and turn into a suitable structure (LDP) for processing */
   LDP map_scan_ldp;
@@ -1517,6 +1523,7 @@ void CBGL::processPoseCloud()
   {
     geometry_msgs::PoseArray pa1;
     pa1.header.stamp = ros::Time::now();
+    pa1.header.frame_id = fixed_frame_id_;
     std::vector<geometry_msgs::Pose> pv1;
     for (unsigned int i = 0; i < dispersed_particles_.size(); i++)
       pv1.push_back(*dispersed_particles_[i]);
@@ -1536,6 +1543,7 @@ void CBGL::processPoseCloud()
   {
     geometry_msgs::PoseArray pa2;
     pa2.header.stamp = ros::Time::now();
+    pa2.header.frame_id = fixed_frame_id_;
     std::vector<geometry_msgs::Pose> pv2;
     for (unsigned int i = 0; i < caer_best_particles.size(); i++)
       pv2.push_back(*caer_best_particles[i]);
@@ -2133,37 +2141,16 @@ CBGL::siftThroughCAERPanoramic(
     }
   }
 
-  /*
-   * for (unsigned int i = 0; i < all_hypotheses.size(); i=i+da_)
-   * {
-   * ROS_INFO("(%f,%f,%f)",
-   * all_hypotheses[i]->position.x,
-   * all_hypotheses[i]->position.y,
-   * extractYawFromPose(*all_hypotheses[i]));
-   * }
-
-   * / * Publish ALL CAERS * /
-   * geometry_msgs::PoseArray pa2;
-   * pa2.header.stamp = ros::Time::now();
-   * std::vector<geometry_msgs::Pose> pv2;
-   * for (unsigned int i = 0; i < all_hypotheses.size(); i++)
-   * {
-   * pv2.push_back(*all_hypotheses[i]);
-   * pv2[i].position.x = caers[i];
-   * }
-   * pa2.poses = pv2;
-   * all_hypotheses_caer_publisher_.publish(pa2);
-
-
-   * / * Publish ALL hypotheses * /
-   * geometry_msgs::PoseArray pa1;
-   * pa1.header.stamp = ros::Time::now();
-   * std::vector<geometry_msgs::Pose> pv1;
-   * for (unsigned int i = 0; i < all_hypotheses.size(); i++)
-   * pv1.push_back(*all_hypotheses[i]);
-   * pa1.poses = pv1;
-   * all_hypotheses_publisher_.publish(pa1);
-   */
+  if (publish_pose_sets_)
+  {
+    geometry_msgs::PoseArray pa;
+    pa.header.stamp = ros::Time::now();
+    pa.header.frame_id = fixed_frame_id_;
+    pa.poses.reserve(all_hypotheses.size());
+    for (unsigned int i = 0; i < all_hypotheses.size(); i++)
+      pa.poses.push_back(*all_hypotheses[i]);
+    all_hypotheses_caer_publisher_.publish(pa);
+  }
 
   /* Partially sort caer indices: move the top_k_caers_ smallest to the front */
   std::vector<size_t> idx(caers.size());
