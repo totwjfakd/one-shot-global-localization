@@ -1388,10 +1388,32 @@ CBGL::mapCallback(const nav_msgs::OccupancyGrid& map_msg)
   map_res_ = map_.info.resolution;
   map_hgt_ = map_.info.height;
 
-  /* Re-set the map png file */
-  unsigned char converted[4*map_msg.data.size()];
-  convertMapToPNG(map_msg, converted);
-  omap_ = ranges::OMap(converted);
+  /* Re-set the RangeLib map.  RangeLib uses image coordinates, so y is flipped
+   * from the ROS OccupancyGrid row order. */
+  const unsigned int width = map_msg.info.width;
+  const unsigned int height = map_msg.info.height;
+  ranges::OMap omap(width, height);
+  omap.raw_grid.resize(width);
+  for (unsigned int x = 0; x < width; x++)
+    omap.raw_grid[x].resize(height);
+
+  for (unsigned int y = 0; y < height; y++)
+  {
+    const unsigned int ros_y = height - 1 - y;
+    for (unsigned int x = 0; x < width; x++)
+    {
+      const int cell = map_msg.data[x + ros_y * width];
+
+      omap.grid[x][y] = (cell == 100);
+      if (cell == 100)
+        omap.raw_grid[x][y] = 0;
+      else if (cell == 0)
+        omap.raw_grid[x][y] = 254;
+      else
+        omap.raw_grid[x][y] = 205;
+    }
+  }
+  omap_ = omap;
 
   received_map_ = true;
   if (received_scan_ && received_pose_cloud_ && received_start_signal_)
@@ -1801,12 +1823,14 @@ CBGL::scanCallback(
 
   for (unsigned int i = 0; i < s_->ranges.size(); i++)
   {
-    if (!std::isfinite(s_->ranges[i]))
-      latest_world_scan_->ranges[i] = 0;
+    float& range = latest_world_scan_->ranges[i];
+    if (range != range || range > latest_world_scan_->range_max)
+      range = latest_world_scan_->range_max;
   }
   /* What's the lowest range? */
   double latest_world_scan_min_range_now =
-    *min_element(s_->ranges.begin(), s_->ranges.end());
+    *min_element(latest_world_scan_->ranges.begin(),
+      latest_world_scan_->ranges.end());
 
   /* Remove garbage measurements if lowest measured range <= min sensor range */
   if (latest_world_scan_min_range_now <= latest_world_scan_->range_min)
@@ -1884,9 +1908,11 @@ CBGL::scanMap(
     scan_method.compare("cddt")         == 0)
   {
     /* Convert laser position to grid coordinates */
-    float x = current_laser_pose.position.x / map_.info.resolution;
+    float x = (current_laser_pose.position.x -
+      map_.info.origin.position.x) / map_.info.resolution;
     float y = map_.info.height - 1 -
-      current_laser_pose.position.y / map_.info.resolution;
+      (current_laser_pose.position.y -
+      map_.info.origin.position.y) / map_.info.resolution;
     float a = extractYawFromPose(current_laser_pose);
 
     /*
@@ -1998,9 +2024,11 @@ CBGL::scanMapPanoramic(
     scan_method.compare("cddt")         == 0)
   {
     /* Convert laser position to grid coordinates */
-    float x = current_laser_pose.position.x / map_.info.resolution;
+    float x = (current_laser_pose.position.x -
+      map_.info.origin.position.x) / map_.info.resolution;
     float y = map_.info.height - 1 -
-      current_laser_pose.position.y / map_.info.resolution;
+      (current_laser_pose.position.y -
+      map_.info.origin.position.y) / map_.info.resolution;
     float a = extractYawFromPose(current_laser_pose);
 
     /* How many rays? */
@@ -2109,7 +2137,7 @@ CBGL::siftThroughCAERPanoramic(
     for (unsigned int k = 0; k < da_; k++)
     {
       r_ik = r_i;
-      std::rotate(r_ik.begin(), r_ik.begin()+k*shifter, r_ik.end());
+      std::rotate(r_ik.rbegin(), r_ik.rbegin()+k*shifter, r_ik.rend());
       std::vector<float>::const_iterator a = r_ik.begin() + prefix;
       std::vector<float>::const_iterator b = a + nrays_;
 
@@ -2249,10 +2277,10 @@ CBGL::uniformPoseGenerator(void* arg)
 
   double min_x, max_x, min_y, max_y;
 
-  min_x = (map->size_x * map->scale)/2.0 - map->origin_x;
-  max_x = (map->size_x * map->scale)/2.0 + map->origin_x;
-  min_y = (map->size_y * map->scale)/2.0 - map->origin_y;
-  max_y = (map->size_y * map->scale)/2.0 + map->origin_y;
+  min_x = MAP_WXGX(map, 0);
+  max_x = min_x + map->size_x * map->scale;
+  min_y = MAP_WYGY(map, 0);
+  max_y = min_y + map->size_y * map->scale;
 
   pf_vector_t p;
 
@@ -2264,8 +2292,8 @@ CBGL::uniformPoseGenerator(void* arg)
 
     /* Check that it's a free cell */
     int i,j;
-    i = MAP_GXWX(map, p.v[0]);
-    j = MAP_GYWY(map, p.v[1]);
+    i = floor((p.v[0] - min_x) / map->scale);
+    j = floor((p.v[1] - min_y) / map->scale);
     if(MAP_VALID(map,i,j) && (map->cells[MAP_INDEX(map,i,j)].occ_state == -1))
       break;
   }

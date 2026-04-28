@@ -1,5 +1,8 @@
 <launch>
   <arg name="namespace" default="robot"/>
+  <arg name="use_sim_time" default="$(optenv CBGL_USE_SIM_TIME true)"/>
+  <param name="/use_sim_time" value="$(arg use_sim_time)"/>
+
   <group ns="$(arg namespace)">
 
     <node pkg="cbgl" type="cbgl_node" name="cbgl_node" output="screen">

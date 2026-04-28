@@ -43,7 +43,7 @@ laser_z_orientation: "upwards"
 do_undersample_scan: true
 
 # if undersample_rate = 4 then 1 out of 4 rays are considered
-undersample_rate: 1
+undersample_rate: 4
 
 # global pose retrieval method (do_icp AND do_fmt should equal FALSE).
 # fsm works only with panoramic sensors; icp does not discriminate.
