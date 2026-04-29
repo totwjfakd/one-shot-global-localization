@@ -13,7 +13,7 @@ relocalization_2d:
 
   # 机器人底盘坐标系名称
   # Robot base frame name
-  base_frame: "base_link"
+  base_frame: "base_footprint"
 
   # 激光雷达坐标系名称
   # LiDAR sensor frame name
