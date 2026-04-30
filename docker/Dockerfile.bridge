@@ -361,12 +361,18 @@ RUN mkdir -p /opt/ros/noetic && { \
 COPY docker/bridge_qos.yaml /bridge_qos.yaml
 
 ###########################
-# 10.) Runtime: launch parameter_bridge for latched topics and dynamic_bridge for the rest
+# 10.) Runtime: own ROS 1 master, then launch bridges
 ###########################
 RUN { \
       echo '#!/bin/bash'; \
       echo 'set -e'; \
       echo '[ -f /opt/ros/noetic/setup.bash ] && source /opt/ros/noetic/setup.bash'; \
+      echo 'roscore_pid=""'; \
+      echo 'if ! rostopic list >/dev/null 2>&1; then'; \
+      echo '  echo "Starting ROS 1 master at ${ROS_MASTER_URI:-http://localhost:11311}..."'; \
+      echo '  roscore &'; \
+      echo '  roscore_pid=$!'; \
+      echo 'fi'; \
       echo 'until rostopic list >/dev/null 2>&1; do'; \
       echo '  echo "Waiting for ROS 1 master at ${ROS_MASTER_URI:-http://localhost:11311}..."'; \
       echo '  sleep 1'; \
@@ -381,13 +387,13 @@ RUN { \
       echo 'parameter_bridge_pid=$!'; \
       echo 'ros2 run ros1_bridge dynamic_bridge __name:=dynamic_bridge "$@" &'; \
       echo 'dynamic_bridge_pid=$!'; \
-      echo 'trap "kill ${parameter_bridge_pid} ${dynamic_bridge_pid} 2>/dev/null || true" EXIT INT TERM'; \
+      echo 'trap "kill ${parameter_bridge_pid} ${dynamic_bridge_pid} ${roscore_pid} 2>/dev/null || true" EXIT INT TERM'; \
       echo 'set +e'; \
       echo 'wait -n "${parameter_bridge_pid}" "${dynamic_bridge_pid}"'; \
       echo 'status=$?'; \
       echo 'set -e'; \
-      echo 'kill "${parameter_bridge_pid}" "${dynamic_bridge_pid}" 2>/dev/null || true'; \
-      echo 'wait "${parameter_bridge_pid}" "${dynamic_bridge_pid}" 2>/dev/null || true'; \
+      echo 'kill "${parameter_bridge_pid}" "${dynamic_bridge_pid}" ${roscore_pid} 2>/dev/null || true'; \
+      echo 'wait "${parameter_bridge_pid}" "${dynamic_bridge_pid}" ${roscore_pid} 2>/dev/null || true'; \
       echo 'exit "${status}"'; \
     } > /run_bridge.sh && chmod +x /run_bridge.sh
 

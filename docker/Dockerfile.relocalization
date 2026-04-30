@@ -1,0 +1,80 @@
+FROM osrf/ros:noetic-desktop
+
+SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-c"]
+
+# ------------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      sudo \
+      apt-utils \
+      build-essential \
+      cmake \
+      g++ \
+      git \
+      lsb-release \
+      python3-catkin-tools \
+      python3-rosdep \
+      python3-rosinstall \
+      python3-rosinstall-generator \
+      python3-wstool \
+      libeigen3-dev \
+      libopencv-dev \
+      libpcl-dev \
+      libyaml-cpp-dev \
+      ros-noetic-actionlib \
+      ros-noetic-actionlib-msgs \
+      ros-noetic-angles \
+      ros-noetic-cv-bridge \
+      ros-noetic-map-server \
+      ros-noetic-octomap \
+      ros-noetic-octomap-msgs \
+      ros-noetic-pcl-conversions \
+      ros-noetic-pcl-ros \
+      ros-noetic-tf \
+      ros-noetic-tf2 \
+      ros-noetic-tf2-eigen \
+      ros-noetic-tf2-geometry-msgs \
+      ros-noetic-tf2-ros \
+      ros-noetic-tf2-sensor-msgs \
+      ros-noetic-visualization-msgs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ------------------------------------------------------------------------------
+ENV USER=relocalization
+RUN useradd --create-home ${USER}                                           && \
+    echo ${USER} ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/${USER}         && \
+    chmod 0440 /etc/sudoers.d/${USER}                                       && \
+    mkdir -p /home/${USER}/catkin_ws/src                                    && \
+    chown -R ${USER}:${USER} /home/${USER}/catkin_ws
+
+USER ${USER}
+WORKDIR /home/${USER}
+
+# ------------------------------------------------------------------------------
+COPY --chown=${USER}:${USER} \
+  relocalization_toolbox/relocalization_toolbox/relocalization_toolbox_msgs/ \
+  /home/${USER}/catkin_ws/src/relocalization_toolbox_msgs/
+COPY --chown=${USER}:${USER} \
+  relocalization_toolbox/relocalization_toolbox/relocalization_toolbox/ \
+  /home/${USER}/catkin_ws/src/relocalization_toolbox/
+
+RUN source /opt/ros/noetic/setup.bash                                      && \
+    cd /home/${USER}/catkin_ws                                             && \
+    catkin build relocalization_toolbox_msgs relocalization_toolbox
+
+# ------------------------------------------------------------------------------
+RUN echo "source /opt/ros/noetic/setup.bash" >> /home/${USER}/.bashrc
+RUN echo "[ -f /home/${USER}/catkin_ws/devel/setup.bash ] && source /home/${USER}/catkin_ws/devel/setup.bash" >> /home/${USER}/.bashrc
+
+# ------------------------------------------------------------------------------
+RUN echo "#!/bin/bash"                                                   > /home/${USER}/relocalization_launch.sh
+RUN echo "source /opt/ros/noetic/setup.bash"                            >> /home/${USER}/relocalization_launch.sh
+RUN echo "source /home/${USER}/catkin_ws/devel/setup.bash"              >> /home/${USER}/relocalization_launch.sh
+RUN echo 'until rostopic list >/dev/null 2>&1; do'                      >> /home/${USER}/relocalization_launch.sh
+RUN echo '  echo "Waiting for ROS 1 master at ${ROS_MASTER_URI:-http://127.0.0.1:11311}..."' >> /home/${USER}/relocalization_launch.sh
+RUN echo '  sleep 1'                                                    >> /home/${USER}/relocalization_launch.sh
+RUN echo 'done'                                                         >> /home/${USER}/relocalization_launch.sh
+RUN echo "exec roslaunch relocalization_toolbox passive_fast_2d.launch" >> /home/${USER}/relocalization_launch.sh
+RUN chmod +x /home/${USER}/relocalization_launch.sh
+
+# ------------------------------------------------------------------------------
+ENTRYPOINT ["bash", "/home/relocalization/relocalization_launch.sh"]

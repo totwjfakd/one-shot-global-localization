@@ -57,7 +57,11 @@ RUN echo "[ -f /home/${USER}/catkin_ws/devel/setup.bash ] && source /home/${USER
 RUN echo "#!/bin/bash"                                      > /home/${USER}/cbgl_launch.sh
 RUN echo "source /opt/ros/kinetic/setup.bash"              >> /home/${USER}/cbgl_launch.sh
 RUN echo "source /home/${USER}/catkin_ws/devel/setup.bash" >> /home/${USER}/cbgl_launch.sh
-RUN echo "roslaunch cbgl cbgl.launch"                      >> /home/${USER}/cbgl_launch.sh
+RUN echo 'until rostopic list >/dev/null 2>&1; do'         >> /home/${USER}/cbgl_launch.sh
+RUN echo '  echo "Waiting for ROS 1 master at ${ROS_MASTER_URI:-http://127.0.0.1:11311}..."' >> /home/${USER}/cbgl_launch.sh
+RUN echo '  sleep 1'                                       >> /home/${USER}/cbgl_launch.sh
+RUN echo 'done'                                            >> /home/${USER}/cbgl_launch.sh
+RUN echo "exec roslaunch cbgl cbgl.launch"                 >> /home/${USER}/cbgl_launch.sh
 RUN chmod +x /home/${USER}/cbgl_launch.sh
 # ------------------------------------------------------------------------------
 ENTRYPOINT bash /home/${USER}/cbgl_launch.sh

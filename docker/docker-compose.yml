@@ -13,9 +13,14 @@ services:
     ipc: host
     user: cbgl
     environment:
+      - ROS_MASTER_URI=http://127.0.0.1:11311
+      - ROS_HOSTNAME=127.0.0.1
+      - ROS_IP=127.0.0.1
       - CBGL_USE_SIM_TIME=true
     volumes:
       - ../cbgl:/home/cbgl/catkin_ws/src/cbgl/:rw
+    depends_on:
+      - ros1_bridge
 
   ros1_bridge:
     build:
@@ -37,6 +42,28 @@ services:
       - ROS_LOCALHOST_ONLY=0
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
       - FASTDDS_BUILTIN_TRANSPORTS=UDPv4
+    restart: on-failure
+
+  relocalization_toolbox:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.relocalization
+
+    image: relocalization-toolbox:local
+    container_name: relocalization_toolbox
+
+    stdin_open: true
+    tty: true
+    network_mode: "host"
+    ipc: host
+    user: relocalization
+    environment:
+      - ROS_MASTER_URI=http://127.0.0.1:11311
+      - ROS_HOSTNAME=127.0.0.1
+      - ROS_IP=127.0.0.1
+    volumes:
+      - ../relocalization_toolbox/relocalization_toolbox/relocalization_toolbox:/home/relocalization/catkin_ws/src/relocalization_toolbox:rw
+      - ../relocalization_toolbox/relocalization_toolbox/relocalization_toolbox_msgs:/home/relocalization/catkin_ws/src/relocalization_toolbox_msgs:rw
     depends_on:
-      - cbgl
+      - ros1_bridge
     restart: on-failure
