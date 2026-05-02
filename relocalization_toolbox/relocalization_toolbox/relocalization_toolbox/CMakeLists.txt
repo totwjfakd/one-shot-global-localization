@@ -4,8 +4,7 @@ project(relocalization_toolbox)
 set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-add_compile_options(-O3 -flto -ffast-math -funroll-loops)
-add_link_options(-flto)
+add_compile_options(-O3 -ffast-math -funroll-loops)
 
 find_package(catkin REQUIRED COMPONENTS
 	roscpp

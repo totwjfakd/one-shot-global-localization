@@ -77,6 +77,32 @@ namespace relocalization_2d
         ROS_INFO("Relocalization map data loaded successfully.");
     }
 
+    float relocalization_2d::score_transform(
+        const geometry_msgs::TransformStamped &tf_map_lidar,
+        const sensor_msgs::LaserScan &scan,
+        const int &lidar_sampling_step,
+        const int &map_sampling_ratio,
+        const nav_msgs::OccupancyGrid &map)
+    {
+        if (map_data_.header.frame_id != map.header.frame_id ||
+            map_data_.info.height != map.info.height ||
+            map_data_.info.width != map.info.width ||
+            map_data_.data != map.data ||
+            map_sampling_ratio_ != map_sampling_ratio)
+        {
+            set_map(map, map_sampling_ratio);
+        }
+
+        return likelihood_field_2d_instance_->get_confidence(
+            tf_map_lidar,
+            scan,
+            map_data_,
+            obs_dist_table_global_,
+            max_tolerance_dist_,
+            lidar_sampling_step,
+            geometric_mean_fusion_);
+    }
+
     tuple<bool, vector<float>, vector<geometry_msgs::TransformStamped>> relocalization_2d::get_candidates(
         const sensor_msgs::LaserScan &scan,
         const bool &lidar_reverted,
@@ -98,7 +124,7 @@ namespace relocalization_2d
             map_data_.data != map.data ||
             map_sampling_ratio_ != map_sampling_ratio)
         {
-            set_map(map, map_sampling_ratio_);
+            set_map(map, map_sampling_ratio);
 
             map_changed = true;
         }

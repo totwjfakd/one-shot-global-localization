@@ -29,6 +29,7 @@
 #include <relocalization_toolbox_msgs/initial_pose_request.h>
 #include <relocalization_toolbox_msgs/relocalization_request.h>
 #include <relocalization_toolbox_msgs/get_candidates_request.h>
+#include <relocalization_toolbox_msgs/score_pose_request.h>
 #include <relocalization/utils/relocalization_2d/relocalization_2d.h>
 
 #define NODE_NAME "relocalization_2d_handler"
@@ -89,11 +90,13 @@ int max_iterations;
 unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster;
 unique_ptr<tf2_ros::Buffer> tf_buffer;
 geometry_msgs::TransformStamped tf_msg_lidar_base;
+bool tf_msg_lidar_base_received = false;
 
 // relocalization services
 ros::ServiceServer relocalization_server;
 ros::ServiceServer relocalization_simple_server;
 ros::ServiceServer get_candidates_server;
+ros::ServiceServer score_pose_server;
 // relocalization client and publisher
 ros::ServiceClient set_init_pose_client;
 ros::Publisher init_pose_pub;
@@ -108,6 +111,29 @@ bool scan_data_received = false;
 bool map_data_received = false;
 
 // callback functions
+bool update_lidar_base_transform(const ros::Duration &timeout)
+{
+    try
+    {
+        tf_msg_lidar_base = tf_buffer->lookupTransform(
+            lidar_frame,
+            base_frame,
+            ros::Time(0),
+            timeout);
+        tf_msg_lidar_base_received = true;
+
+        return true;
+    }
+    catch (tf2::TransformException &ex)
+    {
+        ROS_WARN("%s: Transform from %s to %s is not available yet: %s",
+                 TAG, lidar_frame.c_str(), base_frame.c_str(), ex.what());
+        tf_msg_lidar_base_received = false;
+
+        return false;
+    }
+}
+
 bool relocalization_request_callback(relocalization_toolbox_msgs::relocalization_request::Request &req,
                                      relocalization_toolbox_msgs::relocalization_request::Response &res)
 {
@@ -184,6 +210,14 @@ bool relocalization_request_callback(relocalization_toolbox_msgs::relocalization
 
             if (get<0>(reloc_result))
             {
+                if (!update_lidar_base_transform(ros::Duration(5.0)))
+                {
+                    ROS_ERROR("%s: Relocalization failed. Missing transform from %s to %s.", TAG,
+                              lidar_frame.c_str(), base_frame.c_str());
+                    res.result = CMD_RESPONSE_ERROR;
+                    return true;
+                }
+
                 res.result = CMD_RESPONSE_OK;
                 res.score = get<1>(reloc_result);
 
@@ -335,6 +369,14 @@ bool get_candidates_request_callback(relocalization_toolbox_msgs::get_candidates
 
             if (get<0>(reloc_candidates))
             {
+                if (!update_lidar_base_transform(ros::Duration(5.0)))
+                {
+                    ROS_ERROR("%s: Get candidates failed. Missing transform from %s to %s.", TAG,
+                              lidar_frame.c_str(), base_frame.c_str());
+                    res.result = CMD_RESPONSE_ERROR;
+                    return true;
+                }
+
                 res.result = CMD_RESPONSE_OK;
                 res.scores = get<1>(reloc_candidates);
                 res.num_of_candidates = res.scores.size();
@@ -389,6 +431,175 @@ bool get_candidates_request_callback(relocalization_toolbox_msgs::get_candidates
     ret = true;
 
     return ret;
+}
+
+bool score_pose_request_callback(relocalization_toolbox_msgs::score_pose_request::Request &req,
+                                 relocalization_toolbox_msgs::score_pose_request::Response &res)
+{
+    sensor_msgs::LaserScan score_scan_data;
+    nav_msgs::OccupancyGrid score_map_data;
+    bool score_scan_received = false;
+    bool score_map_received = false;
+
+    if (req.scan_mode == req.MODE_FROM_SRV)
+    {
+        score_scan_data = req.scan;
+        score_scan_data.header.frame_id = lidar_frame;
+        score_scan_received = true;
+    }
+    else if (req.scan_mode == req.MODE_FROM_TOPIC)
+    {
+        auto scan_data_ptr = ros::topic::waitForMessage<sensor_msgs::LaserScan>("scan");
+
+        if (scan_data_ptr)
+        {
+            score_scan_data = *scan_data_ptr;
+            score_scan_data.header.frame_id = lidar_frame;
+            score_scan_received = true;
+        }
+    }
+    else
+    {
+        ROS_ERROR("%s: Score request failed, invalid scan input mode.", TAG);
+        res.result = CMD_RESPONSE_ERROR;
+        return true;
+    }
+
+    if (!score_scan_received)
+    {
+        ROS_ERROR("%s: Score request failed. No scan data received.", TAG);
+        res.result = CMD_RESPONSE_ERROR;
+        return true;
+    }
+
+    if (req.map_mode == req.MODE_FROM_SRV)
+    {
+        auto data_loaded = load_map_2d(req.map_path, req.map_name, map_frame);
+        score_map_received = get<0>(data_loaded);
+
+        if (score_map_received)
+        {
+            score_map_data = get<1>(data_loaded);
+        }
+    }
+    else if (req.map_mode == req.MODE_FROM_TOPIC)
+    {
+        auto map_data_ptr = ros::topic::waitForMessage<nav_msgs::OccupancyGrid>("map", ros::Duration(5.0));
+
+        if (map_data_ptr)
+        {
+            score_map_data = *map_data_ptr;
+            score_map_data.header.frame_id = map_frame;
+            score_map_received = true;
+        }
+    }
+    else
+    {
+        ROS_ERROR("%s: Score request failed, invalid map input mode.", TAG);
+        res.result = CMD_RESPONSE_ERROR;
+        return true;
+    }
+
+    if (!score_map_received)
+    {
+        ROS_ERROR("%s: Score request failed. No map data received.", TAG);
+        res.result = CMD_RESPONSE_ERROR;
+        return true;
+    }
+
+    geometry_msgs::PoseWithCovarianceStamped known_pose = req.robot_pose_on_map;
+    known_pose.header.stamp = score_scan_data.header.stamp;
+    known_pose.header.frame_id = known_pose.header.frame_id.empty() ? map_frame : known_pose.header.frame_id;
+
+    if (!update_lidar_base_transform(ros::Duration(5.0)))
+    {
+        ROS_ERROR("%s: Score request failed. Missing transform from %s to %s.", TAG,
+                  lidar_frame.c_str(), base_frame.c_str());
+        res.result = CMD_RESPONSE_ERROR;
+        return true;
+    }
+
+    geometry_msgs::TransformStamped known_tf_map_to_base;
+    known_tf_map_to_base.header.stamp = score_scan_data.header.stamp;
+    known_tf_map_to_base.header.frame_id = known_pose.header.frame_id;
+    known_tf_map_to_base.child_frame_id = base_frame;
+    known_tf_map_to_base.transform.translation.x = known_pose.pose.pose.position.x;
+    known_tf_map_to_base.transform.translation.y = known_pose.pose.pose.position.y;
+    known_tf_map_to_base.transform.translation.z = known_pose.pose.pose.position.z;
+    known_tf_map_to_base.transform.rotation = known_pose.pose.pose.orientation;
+
+    tf2::Transform tf_map_base;
+    tf2::Transform tf_lidar_base;
+    tf2::fromMsg(known_pose.pose.pose, tf_map_base);
+    tf2::fromMsg(tf_msg_lidar_base.transform, tf_lidar_base);
+    tf2::Transform tf_map_lidar = tf_map_base * tf_lidar_base.inverse();
+
+    geometry_msgs::TransformStamped known_tf_map_to_lidar;
+    known_tf_map_to_lidar.header.stamp = score_scan_data.header.stamp;
+    known_tf_map_to_lidar.header.frame_id = map_frame;
+    known_tf_map_to_lidar.child_frame_id = lidar_frame;
+    known_tf_map_to_lidar.transform = tf2::toMsg(tf_map_lidar);
+
+    res.known_score = relocalization_2d_instance->score_transform(
+        known_tf_map_to_lidar,
+        score_scan_data,
+        lidar_sampling_step,
+        map_sampling_ratio,
+        score_map_data);
+    res.known_tf_map_to_base = known_tf_map_to_base;
+    res.known_tf_map_to_lidar = known_tf_map_to_lidar;
+
+    auto top_result = relocalization_2d_instance->get_candidates(
+        score_scan_data,
+        lidar_reverted,
+        lidar_sampling_step,
+        map_sampling_ratio,
+        score_map_data,
+        1);
+
+    if (!get<0>(top_result) || get<1>(top_result).empty() || get<2>(top_result).empty())
+    {
+        ROS_ERROR("%s: Score request failed. No top relocalization candidate available.", TAG);
+        res.result = CMD_RESPONSE_ERROR;
+        return true;
+    }
+
+    res.top_score = get<1>(top_result)[0];
+    res.top_tf_map_to_lidar = get<2>(top_result)[0];
+
+    tf2::Transform tf_top_map_lidar, tf_top_map_base;
+    tf2::fromMsg(res.top_tf_map_to_lidar.transform, tf_top_map_lidar);
+    tf_top_map_base = tf_top_map_lidar * tf_lidar_base;
+
+    res.top_tf_map_to_base.header.stamp = res.top_tf_map_to_lidar.header.stamp;
+    res.top_tf_map_to_base.header.frame_id = map_frame;
+    res.top_tf_map_to_base.child_frame_id = base_frame;
+    res.top_tf_map_to_base.transform = tf2::toMsg(tf_top_map_base);
+
+    res.dx = res.top_tf_map_to_base.transform.translation.x - res.known_tf_map_to_base.transform.translation.x;
+    res.dy = res.top_tf_map_to_base.transform.translation.y - res.known_tf_map_to_base.transform.translation.y;
+    res.distance = hypot(res.dx, res.dy);
+    res.dyaw = angles::shortest_angular_distance(
+        tf::getYaw(res.known_tf_map_to_base.transform.rotation),
+        tf::getYaw(res.top_tf_map_to_base.transform.rotation));
+    res.result = CMD_RESPONSE_OK;
+
+    ROS_INFO("%s: Score comparison known=(%.3f, %.3f, %.3f) score=%.4f, top=(%.3f, %.3f, %.3f) score=%.4f, d=(%.3f, %.3f, %.3f, %.3f).",
+             TAG,
+             res.known_tf_map_to_base.transform.translation.x,
+             res.known_tf_map_to_base.transform.translation.y,
+             tf::getYaw(res.known_tf_map_to_base.transform.rotation),
+             res.known_score,
+             res.top_tf_map_to_base.transform.translation.x,
+             res.top_tf_map_to_base.transform.translation.y,
+             tf::getYaw(res.top_tf_map_to_base.transform.rotation),
+             res.top_score,
+             res.dx,
+             res.dy,
+             res.distance,
+             res.dyaw);
+
+    return true;
 }
 
 int main(int argc, char **argv)
@@ -475,7 +686,7 @@ int main(int argc, char **argv)
     {
         ROS_INFO("%s: Attempting to fetch map data...", TAG);
 
-        auto map_data_ptr = ros::topic::waitForMessage<nav_msgs::OccupancyGrid>("map");
+        auto map_data_ptr = ros::topic::waitForMessage<nav_msgs::OccupancyGrid>("map", ros::Duration(5.0));
 
         if (map_data_ptr)
         {
@@ -498,26 +709,12 @@ int main(int argc, char **argv)
     relocalization_server = node_handle.advertiseService("relocalization_request", relocalization_request_callback);
     relocalization_simple_server = node_handle.advertiseService("relocalization_simple_request", relocalization_simple_request_callback);
     get_candidates_server = node_handle.advertiseService("get_relocalization_candidates_request", get_candidates_request_callback);
+    score_pose_server = node_handle.advertiseService("score_relocalization_pose", score_pose_request_callback);
     set_init_pose_client = node_handle.serviceClient<relocalization_toolbox_msgs::initial_pose_request>("set_init_pose_request");
     init_pose_pub = node_handle.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1);
 
-    ROS_INFO("%s: Waiting for static transform from %s to %s...", TAG, lidar_frame.c_str(), base_frame.c_str());
-
-    try
-    {
-        tf_msg_lidar_base = tf_buffer->lookupTransform(
-            lidar_frame,
-            base_frame,
-            ros::Time(0),
-            ros::Duration(30.0));
-    }
-    catch (tf2::TransformException &ex)
-    {
-        ROS_ERROR("%s: Failed to retrieve transform from %s to %s.", TAG,
-                  lidar_frame.c_str(), base_frame.c_str());
-
-        return 0;
-    }
+    ROS_INFO("%s: Checking static transform from %s to %s...", TAG, lidar_frame.c_str(), base_frame.c_str());
+    update_lidar_base_transform(ros::Duration(1.0));
 
     ROS_INFO("%s: Ready and listening for service requests.", TAG);
 

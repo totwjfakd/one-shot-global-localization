@@ -65,6 +65,11 @@ namespace area_set_2d
 
         ros::NodeHandle node_handle_;
         ros::Publisher anchor_point_pub_;
+        ros::Timer anchor_point_pub_timer_;
+        sensor_msgs::PointCloud2 anchor_points_cloud_;
+        bool anchor_points_cloud_ready_ = false;
+
+        void publish_anchor_points_cloud(const ros::TimerEvent &event);
 
         nav_msgs::OccupancyGrid get_area_submap(const nav_msgs::OccupancyGrid &map,
                                                 const sensor_msgs::LaserScan &scan,

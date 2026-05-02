@@ -1755,7 +1755,10 @@ geometry_msgs::Point32 generate_point(const geometry_msgs::Point32 &p0, const ge
         return new_point;
     }
 
-    float magnitude = sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    float dx = dir.x - p0.x;
+    float dy = dir.y - p0.y;
+    float dz = dir.z - p0.z;
+    float magnitude = sqrt(dx * dx + dy * dy + dz * dz);
 
     if (magnitude <= 1e-8)
     {
@@ -1766,9 +1769,9 @@ geometry_msgs::Point32 generate_point(const geometry_msgs::Point32 &p0, const ge
     else
     {
         geometry_msgs::Point32 normalized_dir;
-        normalized_dir.x = dir.x / magnitude;
-        normalized_dir.y = dir.y / magnitude;
-        normalized_dir.z = dir.z / magnitude;
+        normalized_dir.x = dx / magnitude;
+        normalized_dir.y = dy / magnitude;
+        normalized_dir.z = dz / magnitude;
 
         new_point.x = p0.x + normalized_dir.x * dist;
         new_point.y = p0.y + normalized_dir.y * dist;

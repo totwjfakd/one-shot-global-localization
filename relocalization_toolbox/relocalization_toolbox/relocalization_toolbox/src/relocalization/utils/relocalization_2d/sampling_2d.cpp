@@ -47,7 +47,7 @@ namespace sampling_2d
         start_x_ = origin_x + current_map_x_ / 2.0;
         start_y_ = origin_y + current_map_y_ / 2.0;
 
-        origin_.x = 0.0f;
+        origin_.x = 2.0f;
         origin_.y = 0.0f;
         origin_.z = 0.0f;
 
@@ -68,7 +68,8 @@ namespace sampling_2d
         rtree_ = bgi::rtree<RTreeValue, bgi::quadratic<16>>(initial_data.begin(), initial_data.end());
 #endif
 
-        ROS_INFO("traversability sampling initialized successfully.");
+        ROS_INFO("traversability sampling initialized successfully. RRT root: (%.3f, %.3f).",
+                 origin_.x, origin_.y);
     }
 
     vector<geometry_msgs::Point32> sampling_2d::get_points(const int &timeout_secs)

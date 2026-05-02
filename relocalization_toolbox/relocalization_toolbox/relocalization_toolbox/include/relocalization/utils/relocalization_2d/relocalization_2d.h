@@ -66,6 +66,12 @@ namespace relocalization_2d
             const int &map_sampling_ratio,
             const nav_msgs::OccupancyGrid &map,
             const int &max_num_of_candidates = 1);
+        float score_transform(
+            const geometry_msgs::TransformStamped &tf_map_lidar,
+            const sensor_msgs::LaserScan &scan,
+            const int &lidar_sampling_step,
+            const int &map_sampling_ratio,
+            const nav_msgs::OccupancyGrid &map);
         tuple<bool, float, geometry_msgs::TransformStamped> relocalize(
             const sensor_msgs::LaserScan &scan,
             const bool &lidar_reverted,
