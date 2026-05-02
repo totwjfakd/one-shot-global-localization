@@ -1,0 +1,20 @@
+uint8 map_mode
+uint8 scan_mode
+uint8 MODE_FROM_TOPIC = 0
+uint8 MODE_FROM_SRV = 1
+string map_path
+string map_name
+sensor_msgs/LaserScan scan
+geometry_msgs/PoseWithCovarianceStamped robot_pose_on_map
+---
+string result
+float32 known_score
+geometry_msgs/TransformStamped known_tf_map_to_base
+geometry_msgs/TransformStamped known_tf_map_to_lidar
+float32 top_score
+geometry_msgs/TransformStamped top_tf_map_to_base
+geometry_msgs/TransformStamped top_tf_map_to_lidar
+float32 dx
+float32 dy
+float32 distance
+float32 dyaw
