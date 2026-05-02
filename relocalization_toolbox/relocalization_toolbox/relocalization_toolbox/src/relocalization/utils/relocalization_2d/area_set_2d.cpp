@@ -22,10 +22,25 @@ namespace area_set_2d
           sensing_radius_(sensing_radius), anchor_point_min_dist_(anchor_point_min_dist),
           angle_search_step_(angle_search_step)
     {
-        anchor_point_pub_ = node_handle_.advertise<sensor_msgs::PointCloud2>("relocalization_anchor_points", 1);
+        anchor_point_pub_ = node_handle_.advertise<sensor_msgs::PointCloud2>("relocalization_anchor_points", 1, true);
+        anchor_point_pub_timer_ = node_handle_.createTimer(
+            ros::Duration(1.0),
+            &area_set_2d::publish_anchor_points_cloud,
+            this);
 
         return;
     };
+
+    void area_set_2d::publish_anchor_points_cloud(const ros::TimerEvent &event)
+    {
+        if (!anchor_points_cloud_ready_)
+        {
+            return;
+        }
+
+        anchor_points_cloud_.header.stamp = ros::Time::now();
+        anchor_point_pub_.publish(anchor_points_cloud_);
+    }
 
     nav_msgs::OccupancyGrid area_set_2d::get_area_submap(const nav_msgs::OccupancyGrid &map,
                                                          const sensor_msgs::LaserScan &scan,
@@ -238,6 +253,7 @@ namespace area_set_2d
         sampling.initialize(map, min_dist_to_obs_table);
 
         valid_points = sampling.get_points(traversability_sampling_duration_);
+        ROS_INFO("RRT/anchor sampling generated %lu valid points.", valid_points.size());
 
         // get sub-area data
         auto mean_dist_calc_start_time = ros::WallTime::now();
@@ -269,30 +285,31 @@ namespace area_set_2d
         // visualization
         if (enable_visualization)
         {
-            sensor_msgs::PointCloud2 cloud;
-            cloud.header.stamp = ros::Time::now();
-            cloud.header.frame_id = map.header.frame_id;
+            anchor_points_cloud_ = sensor_msgs::PointCloud2();
+            anchor_points_cloud_.header.stamp = ros::Time::now();
+            anchor_points_cloud_.header.frame_id = map.header.frame_id;
 
-            sensor_msgs::PointCloud2Modifier modifier(cloud);
+            sensor_msgs::PointCloud2Modifier modifier(anchor_points_cloud_);
             modifier.setPointCloud2FieldsByString(1, "xyz");
             modifier.resize(valid_points.size());
 
-            sensor_msgs::PointCloud2Iterator<float> iter_x(cloud, "x");
-            sensor_msgs::PointCloud2Iterator<float> iter_y(cloud, "y");
-            sensor_msgs::PointCloud2Iterator<float> iter_z(cloud, "z");
+            sensor_msgs::PointCloud2Iterator<float> iter_x(anchor_points_cloud_, "x");
+            sensor_msgs::PointCloud2Iterator<float> iter_y(anchor_points_cloud_, "y");
+            sensor_msgs::PointCloud2Iterator<float> iter_z(anchor_points_cloud_, "z");
 
             for (const auto &p : valid_points)
             {
                 *iter_x = p.x;
                 *iter_y = p.y;
-                *iter_z = 0.0f;
+                *iter_z = 0.05f;
 
                 ++iter_x;
                 ++iter_y;
                 ++iter_z;
             }
 
-            anchor_point_pub_.publish(cloud);
+            anchor_points_cloud_ready_ = true;
+            anchor_point_pub_.publish(anchor_points_cloud_);
         }
 
         return ret;
