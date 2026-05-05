@@ -47,7 +47,7 @@ namespace sampling_2d
         start_x_ = origin_x + current_map_x_ / 2.0;
         start_y_ = origin_y + current_map_y_ / 2.0;
 
-        origin_.x = 2.0f;
+        origin_.x = 0.0f;
         origin_.y = 0.0f;
         origin_.z = 0.0f;
 
