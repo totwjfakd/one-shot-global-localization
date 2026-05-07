@@ -78,10 +78,12 @@ class CBGL
 
     /* subscribers */
     ros::Subscriber scan_subscriber_;
+    ros::Subscriber known_scan_subscriber_;
     ros::Subscriber map_subscriber_;
 
     /* services */
     ros::ServiceServer global_localisation_service_;
+    ros::ServiceServer global_localisation_known_service_;
 
     tf::TransformListener tf_listener_;
     tf::TransformBroadcaster tf_broadcaster_;
@@ -110,9 +112,11 @@ class CBGL
     bool tf_broadcast_;
 
     std::string scan_topic_;
+    std::string known_scan_topic_;
     std::string map_topic_;
     std::string output_pose_topic_;
     std::string global_localisation_service_name_;
+    std::string global_localisation_known_service_name_;
 
     std::string laser_z_orientation_;
     bool do_undersample_scan_;
@@ -150,11 +154,20 @@ class CBGL
     double initial_cov_yy_;
     double initial_cov_aa_;
 
+    enum ScanSource
+    {
+      RAW_SCAN,
+      KNOWN_SCAN
+    };
+
     bool received_scan_;
+    bool received_raw_scan_;
+    bool received_known_scan_;
     bool received_map_;
     bool received_pose_cloud_;
     bool running_;
     bool received_start_signal_;
+    ScanSource requested_scan_source_;
 
     /* fixed-to-base tf (pose of base frame in fixed frame) */
     tf::Transform f2b_;
@@ -172,6 +185,8 @@ class CBGL
 
     /* The world scan received latest */
     sensor_msgs::LaserScan::Ptr latest_world_scan_;
+    sensor_msgs::LaserScan::Ptr latest_raw_scan_;
+    sensor_msgs::LaserScan::Ptr latest_known_scan_;
 
     sm_params input_;
     sm_result output_;
@@ -198,6 +213,40 @@ class CBGL
       const sensor_msgs::LaserScan::Ptr& sv);
     double caer(const std::vector<float>& sr,
       const std::vector<float>& sv);
+    float caerMaxRange() const;
+    bool normalizeRangeMaxForCAER(
+      const float& range,
+      float& normalized_range) const;
+    bool isKnownScanRangeForCAER(const float& range) const;
+    bool prepareCAERRangePair(
+      const float& scan_range,
+      const float& map_range,
+      float& normalized_scan_range,
+      float& normalized_map_range) const;
+
+    struct CAERDebugStats
+    {
+      double sum;
+      double precise_sum;
+      double max_abs_error;
+      unsigned int valid_pairs;
+      unsigned int valid_scan_rays;
+      unsigned int valid_map_rays;
+      unsigned int scan_over_max_rays;
+      unsigned int map_over_max_rays;
+      unsigned int scan_negative_rays;
+      unsigned int map_negative_rays;
+      unsigned int scan_inf_rays;
+      unsigned int map_inf_rays;
+      unsigned int scan_nan_rays;
+      unsigned int map_nan_rays;
+      unsigned int overflow_diffs;
+    };
+
+    CAERDebugStats caerDebugStats(
+      const std::vector<float>& sr,
+      const std::vector<float>& sv);
+    double caerRankingScore(const CAERDebugStats& stats) const;
 
     /***************************************************************************
      * Used by FSM
@@ -440,6 +489,11 @@ class CBGL
      * @return void
      */
     void scanCallback(const sensor_msgs::LaserScan::Ptr& scan_msg);
+    void knownScanCallback(const sensor_msgs::LaserScan::Ptr& scan_msg);
+    void storeScan(const sensor_msgs::LaserScan::Ptr& scan_msg,
+      const ScanSource& source);
+    bool activateScan(const sensor_msgs::LaserScan::Ptr& scan_msg);
+    const char* scanSourceName(const ScanSource& source) const;
 
     /***************************************************************************
      * @brief Given the robot's pose and a choice to scan over an angle of 2π,
@@ -474,6 +528,9 @@ class CBGL
     */
     bool startSignalService(std_srvs::Empty::Request& req,
       std_srvs::Empty::Response& res);
+    bool startKnownSignalService(std_srvs::Empty::Request& req,
+      std_srvs::Empty::Response& res);
+    bool startSignalForSource(const ScanSource& source);
 
     /***************************************************************************
      * @brief Pose disperser

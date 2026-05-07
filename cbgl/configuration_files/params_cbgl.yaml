@@ -8,12 +8,14 @@ tf_broadcast: true
 # input topics
 map_topic: "/map"
 scan_topic: "/scan"
+known_scan_topic: "/scan_known"
 
 # output topics
 output_pose_topic: "/initialpose"
 
 # call me
 global_localisation_service_name: "global_localization"
+global_localisation_known_service_name: "global_localization_known"
 
 # Pose densities. The product dl x da determines how many pose hypotheses are
 # dispersed per square meter of map area within the map. The higher the density

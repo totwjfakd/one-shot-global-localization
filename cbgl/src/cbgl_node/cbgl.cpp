@@ -20,10 +20,13 @@ CBGL::CBGL(
   nh_(nh),
   nh_private_(nh_private),
   received_scan_(false),
+  received_raw_scan_(false),
+  received_known_scan_(false),
   received_map_(false),
   received_pose_cloud_(false),
-  received_start_signal_(false),
   running_(false),
+  received_start_signal_(false),
+  requested_scan_source_(RAW_SCAN),
   cachedFFTW3Plans_(false),
   do_icp_(true),
   do_fsm_(false),
@@ -96,17 +99,27 @@ CBGL::CBGL(
   /* This is the scan subscriber */
   scan_subscriber_ = nh_.subscribe(scan_topic_, 1,
     &CBGL::scanCallback, this);
+  known_scan_subscriber_ = nh_.subscribe(known_scan_topic_, 1,
+    &CBGL::knownScanCallback, this);
 
   /* Call me for a fun time */
   global_localisation_service_ =
     nh_.advertiseService(
       ros::this_node::getName() + "/" + global_localisation_service_name_,
       &CBGL::startSignalService, this);
+  global_localisation_known_service_ =
+    nh_.advertiseService(
+      ros::this_node::getName() + "/" +
+      global_localisation_known_service_name_,
+      &CBGL::startKnownSignalService, this);
 
   ROS_INFO("[%s] Inititialised.",                      PKG_NAME.c_str());
   ROS_INFO("[%s] To execute global localization issue",PKG_NAME.c_str());
   ROS_INFO("%*s rosservice call %s", (int)(PKG_NAME.size()+2),"",
     (ros::this_node::getName()+"/"+global_localisation_service_name_).c_str());
+  ROS_INFO("%*s rosservice call %s", (int)(PKG_NAME.size()+2),"",
+    (ros::this_node::getName()+"/"+
+      global_localisation_known_service_name_).c_str());
 }
 
 /*******************************************************************************
@@ -187,8 +200,11 @@ double CBGL::caer(
   double c = 0;
   for (unsigned int i = 0; i < nrays_; i++)
   {
-    if (sr->ranges[i] > 0.0 && sv->ranges[i] > 0.0)
-      c += fabs(sr->ranges[i] - sv->ranges[i]);
+    float scan_range;
+    float map_range;
+    if (prepareCAERRangePair(sr->ranges[i], sv->ranges[i],
+        scan_range, map_range))
+      c += fabs(scan_range - map_range);
   }
 
   return c;
@@ -203,11 +219,171 @@ double CBGL::caer(
   double c = 0;
   for (unsigned int i = 0; i < nrays_; i++)
   {
-    if (sr[i] > 0.0 && sv[i] > 0.0)
-      c += fabs(sr[i] - sv[i]);
+    float scan_range;
+    float map_range;
+    if (prepareCAERRangePair(sr[i], sv[i], scan_range, map_range))
+      c += fabs(scan_range - map_range);
   }
 
   return c;
+}
+
+/*******************************************************************************
+ * @brief Returns the CAER range maximum from the active scan.
+ */
+  float
+CBGL::caerMaxRange() const
+{
+  if (latest_world_scan_)
+    return latest_world_scan_->range_max;
+
+  return static_cast<float>(input_.max_reading);
+}
+
+/*******************************************************************************
+ * @brief Converts no-hit/over-range values to range_max for original CBGL CAER.
+ */
+  bool
+CBGL::normalizeRangeMaxForCAER(
+  const float& range,
+  float& normalized_range) const
+{
+  if (range <= 0.0)
+    return false;
+
+  const float max_range = caerMaxRange();
+  if (range != range || range > max_range)
+    normalized_range = max_range;
+  else
+    normalized_range = range;
+
+  return true;
+}
+
+/*******************************************************************************
+ * @brief True when a known scan beam should contribute to CAER.
+ */
+  bool
+CBGL::isKnownScanRangeForCAER(
+  const float& range) const
+{
+  const float max_range = caerMaxRange();
+
+  return range == range && range > 0.0 && range <= max_range;
+}
+
+/*******************************************************************************
+ * @brief Applies the source-specific CAER invalid range policy.
+ */
+  bool
+CBGL::prepareCAERRangePair(
+  const float& scan_range,
+  const float& map_range,
+  float& normalized_scan_range,
+  float& normalized_map_range) const
+{
+  if (requested_scan_source_ == KNOWN_SCAN)
+  {
+    if (!isKnownScanRangeForCAER(scan_range))
+      return false;
+
+    normalized_scan_range = scan_range;
+  }
+  else if (!normalizeRangeMaxForCAER(scan_range, normalized_scan_range))
+    return false;
+
+  return normalizeRangeMaxForCAER(map_range, normalized_map_range);
+}
+
+/*******************************************************************************
+ * @brief CAER debug statistics with the same valid-pair rule as caer().
+ */
+  CBGL::CAERDebugStats
+CBGL::caerDebugStats(
+  const std::vector<float>& sr,
+  const std::vector<float>& sv)
+{
+  CAERDebugStats stats;
+  stats.sum = 0.0;
+  stats.precise_sum = 0.0;
+  stats.max_abs_error = 0.0;
+  stats.valid_pairs = 0;
+  stats.valid_scan_rays = 0;
+  stats.valid_map_rays = 0;
+  stats.scan_over_max_rays = 0;
+  stats.map_over_max_rays = 0;
+  stats.scan_negative_rays = 0;
+  stats.map_negative_rays = 0;
+  stats.scan_inf_rays = 0;
+  stats.map_inf_rays = 0;
+  stats.scan_nan_rays = 0;
+  stats.map_nan_rays = 0;
+  stats.overflow_diffs = 0;
+
+  for (unsigned int i = 0; i < nrays_; i++)
+  {
+    if (std::isinf(sr[i]))
+      stats.scan_inf_rays++;
+    if (std::isinf(sv[i]))
+      stats.map_inf_rays++;
+    if (sr[i] != sr[i])
+      stats.scan_nan_rays++;
+    if (sv[i] != sv[i])
+      stats.map_nan_rays++;
+    if (sr[i] < 0.0)
+      stats.scan_negative_rays++;
+    if (sv[i] < 0.0)
+      stats.map_negative_rays++;
+
+    float normalized_scan_range;
+    float normalized_map_range;
+    const bool sr_valid = requested_scan_source_ == KNOWN_SCAN ?
+      isKnownScanRangeForCAER(sr[i]) :
+      normalizeRangeMaxForCAER(sr[i], normalized_scan_range);
+    const bool sv_valid =
+      normalizeRangeMaxForCAER(sv[i], normalized_map_range);
+
+    if (sr_valid)
+      stats.valid_scan_rays++;
+    if (sv_valid)
+      stats.valid_map_rays++;
+    if (sr[i] > latest_world_scan_->range_max)
+      stats.scan_over_max_rays++;
+    if (sv[i] > latest_world_scan_->range_max)
+      stats.map_over_max_rays++;
+    if (prepareCAERRangePair(sr[i], sv[i],
+        normalized_scan_range, normalized_map_range))
+    {
+      const float diff = normalized_scan_range - normalized_map_range;
+      const double precise_diff =
+        static_cast<double>(normalized_scan_range) -
+        static_cast<double>(normalized_map_range);
+      const double precise_abs = fabs(precise_diff);
+
+      stats.sum += fabs(diff);
+      stats.precise_sum += precise_abs;
+      if (precise_abs > stats.max_abs_error)
+        stats.max_abs_error = precise_abs;
+      if (!std::isfinite(diff))
+        stats.overflow_diffs++;
+      stats.valid_pairs++;
+    }
+  }
+
+  return stats;
+}
+
+/*******************************************************************************
+ * @brief Preserve the current CAER candidate ranking rule.
+ */
+  double
+CBGL::caerRankingScore(
+  const CAERDebugStats& stats) const
+{
+  if (stats.sum > 0.0)
+    return stats.sum;
+
+  return std::numeric_limits<double>::max();
 }
 
 /*******************************************************************************
@@ -726,6 +902,11 @@ CBGL::initParams()
     scan_topic_ = "/front_laser/scan";
     ROS_ERROR("[%s] scan_topic", PKG_NAME.c_str());
   }
+  if (!nh_private_.getParam("known_scan_topic", known_scan_topic_))
+  {
+    known_scan_topic_ = "/scan_known";
+    ROS_ERROR("[%s] known_scan_topic", PKG_NAME.c_str());
+  }
   if (!nh_private_.getParam("map_topic", map_topic_))
   {
     map_topic_ = "/map";
@@ -766,6 +947,13 @@ CBGL::initParams()
   {
     global_localisation_service_name_ = "/global_localization";
     ROS_ERROR("[%s] global_localisation_service_name", PKG_NAME.c_str());
+  }
+  if (!nh_private_.getParam("global_localisation_known_service_name",
+      global_localisation_known_service_name_))
+  {
+    global_localisation_known_service_name_ = "/global_localization_known";
+    ROS_ERROR("[%s] global_localisation_known_service_name",
+      PKG_NAME.c_str());
   }
   if (!nh_private_.getParam("laser_z_orientation", laser_z_orientation_))
   {
@@ -1780,7 +1968,19 @@ CBGL::retypeScan(const sensor_msgs::LaserScan::Ptr& scan_msg)
 }
 
 /*******************************************************************************
- * @brief The laser scan callback
+ * @brief Returns a human-readable scan source name.
+ * @param[in] source [const ScanSource&] The scan source
+ * @return [const char*] The source name
+ */
+  const char*
+CBGL::scanSourceName(
+  const ScanSource& source) const
+{
+  return source == KNOWN_SCAN ? "known" : "raw";
+}
+
+/*******************************************************************************
+ * @brief The raw laser scan callback
  * @param[in] scan_msg [const sensor_msgs::LaserScan::Ptr&] The input scan
  * message
  * @return void
@@ -1789,7 +1989,34 @@ CBGL::retypeScan(const sensor_msgs::LaserScan::Ptr& scan_msg)
 CBGL::scanCallback(
   const sensor_msgs::LaserScan::Ptr& scan_msg)
 {
-  if (!std::isfinite(scan_msg->ranges[0]))  /* premature scan */
+  storeScan(scan_msg, RAW_SCAN);
+}
+
+/*******************************************************************************
+ * @brief The known laser scan callback
+ * @param[in] scan_msg [const sensor_msgs::LaserScan::Ptr&] The input scan
+ * message
+ * @return void
+ */
+  void
+CBGL::knownScanCallback(
+  const sensor_msgs::LaserScan::Ptr& scan_msg)
+{
+  storeScan(scan_msg, KNOWN_SCAN);
+}
+
+/*******************************************************************************
+ * @brief Stores a raw or known scan after CBGL scan preprocessing.
+ * @param[in] scan_msg [const sensor_msgs::LaserScan::Ptr&] The input scan
+ * @param[in] source [const ScanSource&] The scan source
+ * @return void
+ */
+  void
+CBGL::storeScan(
+  const sensor_msgs::LaserScan::Ptr& scan_msg,
+  const ScanSource& source)
+{
+  if (scan_msg->ranges.empty())  /* premature scan */
     return;
 
   /* Undersample range scan if desirable ------------------------------------ */
@@ -1809,34 +2036,159 @@ CBGL::scanCallback(
     s_->angle_increment = undersample_rate_ * scan_msg->angle_increment;
   }
 
-  /* Store scan properties -------------------------------------------------- */
-  nrays_ = s_->ranges.size();
-  angle_inc_ = s_->angle_increment;
-  angle_min_ = s_->angle_min;
-  input_.min_reading = s_->range_min;
-  input_.max_reading = s_->range_max;
+  sensor_msgs::LaserScan::Ptr processed_scan =
+    boost::make_shared<sensor_msgs::LaserScan>(*s_);
 
+  bool has_valid_range = false;
+  unsigned int raw_finite_count = 0;
+  unsigned int raw_inf_count = 0;
+  unsigned int raw_nan_count = 0;
+  unsigned int raw_negative_count = 0;
+  unsigned int raw_over_max_count = 0;
+  unsigned int processed_finite_count = 0;
+  unsigned int processed_inf_count = 0;
+  unsigned int processed_nan_count = 0;
+  unsigned int processed_negative_count = 0;
+  unsigned int processed_over_max_count = 0;
+  for (unsigned int i = 0; i < s_->ranges.size(); i++)
+  {
+    const float raw_range = s_->ranges[i];
+    if (raw_range < 0.0)
+      raw_negative_count++;
+
+    if (std::isfinite(raw_range))
+    {
+      raw_finite_count++;
+      if (raw_range > processed_scan->range_max)
+        raw_over_max_count++;
+    }
+    else if (std::isinf(raw_range))
+      raw_inf_count++;
+    else if (raw_range != raw_range)
+      raw_nan_count++;
+
+    float& range = processed_scan->ranges[i];
+    if (range != range || range > processed_scan->range_max)
+    {
+      if (source == RAW_SCAN)
+        range = processed_scan->range_max;
+      else
+        range = std::numeric_limits<float>::infinity();
+
+      if (source == RAW_SCAN && range >= processed_scan->range_min &&
+        range > 0.0)
+        has_valid_range = true;
+      continue;
+    }
+
+    if (range >= processed_scan->range_min && range > 0.0)
+      has_valid_range = true;
+  }
+
+  for (unsigned int i = 0; i < processed_scan->ranges.size(); i++)
+  {
+    const float range = processed_scan->ranges[i];
+    if (range < 0.0)
+      processed_negative_count++;
+
+    if (std::isfinite(range))
+    {
+      processed_finite_count++;
+      if (range > processed_scan->range_max)
+        processed_over_max_count++;
+    }
+    else if (std::isinf(range))
+      processed_inf_count++;
+    else if (range != range)
+      processed_nan_count++;
+  }
+
+  ROS_INFO_THROTTLE(1.0,
+    "[%s] Scan debug %s: raw finite=%u inf=%u nan=%u over_max=%u; "
+    "raw_negative=%u; processed finite=%u inf=%u nan=%u over_max=%u "
+    "processed_negative=%u range_max=%f",
+    PKG_NAME.c_str(),
+    scanSourceName(source),
+    raw_finite_count,
+    raw_inf_count,
+    raw_nan_count,
+    raw_over_max_count,
+    raw_negative_count,
+    processed_finite_count,
+    processed_inf_count,
+    processed_nan_count,
+    processed_over_max_count,
+    processed_negative_count,
+    processed_scan->range_max);
+
+  if (!has_valid_range)
+  {
+    ROS_WARN_THROTTLE(5.0, "[%s] Skipping %s scan: no valid finite ranges",
+      PKG_NAME.c_str(), scanSourceName(source));
+    return;
+  }
+
+  const unsigned int previous_nrays = nrays_;
+  nrays_ = processed_scan->ranges.size();
+
+  /* What's the lowest finite range? */
+  double latest_world_scan_min_range_now = std::numeric_limits<double>::infinity();
+  for (unsigned int i = 0; i < processed_scan->ranges.size(); i++)
+  {
+    const float range = processed_scan->ranges[i];
+    if (std::isfinite(range) && range < latest_world_scan_min_range_now)
+      latest_world_scan_min_range_now = range;
+  }
+
+  /* Remove garbage measurements if lowest measured range <= min sensor range */
+  if (latest_world_scan_min_range_now <= processed_scan->range_min)
+    processed_scan->ranges = interpolateRanges(processed_scan->ranges,
+      processed_scan->range_min);
+
+  if (source == KNOWN_SCAN)
+  {
+    latest_known_scan_ =
+      boost::make_shared<sensor_msgs::LaserScan>(*processed_scan);
+    received_known_scan_ = true;
+  }
+  else
+  {
+    latest_raw_scan_ =
+      boost::make_shared<sensor_msgs::LaserScan>(*processed_scan);
+    received_raw_scan_ = true;
+  }
+
+  if (source != requested_scan_source_)
+  {
+    nrays_ = previous_nrays;
+    return;
+  }
+
+  activateScan(processed_scan);
+}
+
+/*******************************************************************************
+ * @brief Makes a stored scan active for the CBGL pipeline.
+ * @param[in] scan_msg [const sensor_msgs::LaserScan::Ptr&] The stored scan
+ * @return [bool] True if the scan is active, false otherwise
+ */
+  bool
+CBGL::activateScan(
+  const sensor_msgs::LaserScan::Ptr& scan_msg)
+{
+  if (!scan_msg || scan_msg->ranges.empty())
+    return false;
+
+  /* Store scan properties -------------------------------------------------- */
+  nrays_ = scan_msg->ranges.size();
+  angle_inc_ = scan_msg->angle_increment;
+  angle_min_ = scan_msg->angle_min;
+  input_.min_reading = scan_msg->range_min;
+  input_.max_reading = scan_msg->range_max;
 
   /* Store the latest scan -------------------------------------------------- */
   latest_world_scan_ =
-    boost::make_shared<sensor_msgs::LaserScan>(*s_);
-
-  for (unsigned int i = 0; i < s_->ranges.size(); i++)
-  {
-    float& range = latest_world_scan_->ranges[i];
-    if (range != range || range > latest_world_scan_->range_max)
-      range = latest_world_scan_->range_max;
-  }
-  /* What's the lowest range? */
-  double latest_world_scan_min_range_now =
-    *min_element(latest_world_scan_->ranges.begin(),
-      latest_world_scan_->ranges.end());
-
-  /* Remove garbage measurements if lowest measured range <= min sensor range */
-  if (latest_world_scan_min_range_now <= latest_world_scan_->range_min)
-    latest_world_scan_->ranges = interpolateRanges(latest_world_scan_->ranges,
-      latest_world_scan_->range_min);
-
+    boost::make_shared<sensor_msgs::LaserScan>(*scan_msg);
 
   /* if first scan cache needed stuff --------------------------------------- */
   if (!received_scan_)
@@ -1844,21 +2196,23 @@ CBGL::scanCallback(
     /* cache the static tf from base to laser if output is required as transform */
     if (tf_broadcast_)
     {
-      if (!getBaseToLaserTf(s_->header.frame_id))
+      if (!getBaseToLaserTf(scan_msg->header.frame_id))
       {
         ROS_WARN("[%s] Skipping scan", PKG_NAME.c_str());
-        return;
+        return false;
       }
     }
 
     if (do_fsm_)
-      cacheFFTW3Plans(s_->ranges.size());
+      cacheFFTW3Plans(scan_msg->ranges.size());
   }
 
   /* Good to go ------------------------------------------------------------- */
   received_scan_ = true;
   if (received_map_ && received_pose_cloud_ && received_start_signal_)
     processPoseCloud();
+
+  return true;
 }
 
 /*******************************************************************************
@@ -2110,9 +2464,13 @@ CBGL::siftThroughCAERPanoramic(
 {
   /* All da_*init_hypotheses.size() hypotheses */
   std::vector<geometry_msgs::Pose::Ptr> all_hypotheses;
+  all_hypotheses.reserve(init_hypotheses.size() * da_);
 
   /* Compute all caers */
   std::vector<double> caers;
+  caers.reserve(init_hypotheses.size() * da_);
+  std::vector<CAERDebugStats> caer_stats;
+  caer_stats.reserve(init_hypotheses.size() * da_);
   std::vector<double> scan_map_times;
   sensor_msgs::LaserScan::Ptr sv_i;
   for (unsigned int i = 0; i < init_hypotheses.size(); i++)
@@ -2159,14 +2517,130 @@ CBGL::siftThroughCAERPanoramic(
 
 
       /* Compute CAER */
-      double c = caer(latest_world_scan_->ranges, r_ikf);
-      if (c > 0.0)
-        caers.push_back(c);
-      else  /* THIS IS NECESSARY */
-        caers.push_back(std::numeric_limits<double>::max());
+      CAERDebugStats stats =
+        caerDebugStats(latest_world_scan_->ranges, r_ikf);
+      caers.push_back(caerRankingScore(stats));
+      caer_stats.push_back(stats);
 
       /* printf("%f\n", caers.back()); */
     }
+  }
+
+  unsigned int min_valid_pairs = nrays_;
+  unsigned int max_valid_pairs = 0;
+  size_t zero_valid_pair_count = 0;
+  size_t zero_sum_count = 0;
+  size_t overflow_score_count = 0;
+  size_t map_over_max_count = 0;
+  for (size_t i = 0; i < caer_stats.size(); i++)
+  {
+    if (caer_stats[i].valid_pairs < min_valid_pairs)
+      min_valid_pairs = caer_stats[i].valid_pairs;
+    if (caer_stats[i].valid_pairs > max_valid_pairs)
+      max_valid_pairs = caer_stats[i].valid_pairs;
+    if (caer_stats[i].valid_pairs == 0)
+      zero_valid_pair_count++;
+    if (caer_stats[i].sum <= 0.0)
+      zero_sum_count++;
+    if (!std::isfinite(caer_stats[i].sum))
+      overflow_score_count++;
+    if (caer_stats[i].map_over_max_rays > 0)
+      map_over_max_count++;
+  }
+
+  ROS_INFO(
+    "[%s] CAER debug summary: hypotheses=%zu nrays=%u range_max=%f "
+    "scan_valid=%u scan_negative=%u "
+    "valid_pairs[min,max]=[%u,%u] zero_valid_pairs=%zu "
+    "zero_or_exact_sum=%zu overflow_scores=%zu map_over_max_hypotheses=%zu",
+    PKG_NAME.c_str(),
+    caer_stats.size(),
+    nrays_,
+    latest_world_scan_->range_max,
+    caer_stats.empty() ? 0 : caer_stats.front().valid_scan_rays,
+    caer_stats.empty() ? 0 : caer_stats.front().scan_negative_rays,
+    min_valid_pairs,
+    max_valid_pairs,
+    zero_valid_pair_count,
+    zero_sum_count,
+    overflow_score_count,
+    map_over_max_count);
+
+  bool have_current_pose_score = false;
+  double current_pose_score = std::numeric_limits<double>::max();
+  CAERDebugStats current_pose_stats;
+  current_pose_stats.sum = 0.0;
+  current_pose_stats.precise_sum = 0.0;
+  current_pose_stats.max_abs_error = 0.0;
+  current_pose_stats.valid_pairs = 0;
+  current_pose_stats.valid_scan_rays = 0;
+  current_pose_stats.valid_map_rays = 0;
+  current_pose_stats.scan_over_max_rays = 0;
+  current_pose_stats.map_over_max_rays = 0;
+  current_pose_stats.scan_negative_rays = 0;
+  current_pose_stats.map_negative_rays = 0;
+  current_pose_stats.scan_inf_rays = 0;
+  current_pose_stats.map_inf_rays = 0;
+  current_pose_stats.scan_nan_rays = 0;
+  current_pose_stats.map_nan_rays = 0;
+  current_pose_stats.overflow_diffs = 0;
+  geometry_msgs::Pose::Ptr current_pose_best;
+
+  try
+  {
+    tf::StampedTransform current_tf;
+    tf_listener_.lookupTransform(fixed_frame_id_, base_frame_id_, ros::Time(0),
+      current_tf);
+
+    geometry_msgs::Pose::Ptr current_pose =
+      boost::make_shared<geometry_msgs::Pose>();
+    tf::poseTFToMsg(current_tf, *current_pose);
+
+    sensor_msgs::LaserScan::Ptr current_map_scan =
+      scanMapPanoramic(current_pose, map_scan_method_);
+    const std::vector<float> current_ranges = current_map_scan->ranges;
+    const size_t current_num_rays = current_ranges.size();
+    const unsigned int current_shifter =
+      round(static_cast<double>(current_num_rays) / da_);
+    const unsigned int current_prefix =
+      round((static_cast<double>(current_num_rays-nrays_))/2);
+
+    const double current_yaw = extractYawFromPose(*current_pose);
+    double current_best_yaw = current_yaw;
+    bool have_current_best = false;
+    for (unsigned int k = 0; k < da_; k++)
+    {
+      std::vector<float> r_ik = current_ranges;
+      std::rotate(r_ik.rbegin(), r_ik.rbegin()+k*current_shifter, r_ik.rend());
+      std::vector<float>::const_iterator a = r_ik.begin() + current_prefix;
+      std::vector<float>::const_iterator b = a + nrays_;
+      std::vector<float> r_ikf(a,b);
+
+      CAERDebugStats stats =
+        caerDebugStats(latest_world_scan_->ranges, r_ikf);
+      const double score = caerRankingScore(stats);
+      if (!have_current_best || score < current_pose_score)
+      {
+        current_pose_score = score;
+        current_pose_stats = stats;
+        current_best_yaw = current_yaw - 2*M_PI * static_cast<double>(k)/da_;
+        wrapAngle(current_best_yaw);
+        have_current_best = true;
+      }
+    }
+
+    current_pose_best =
+      boost::make_shared<geometry_msgs::Pose>(*current_pose);
+    tf::Quaternion q;
+    q.setRPY(0.0, 0.0, current_best_yaw);
+    q.normalize();
+    tf::quaternionTFToMsg(q, current_pose_best->orientation);
+    have_current_pose_score = true;
+  }
+  catch (tf::TransformException& ex)
+  {
+    ROS_WARN("[%s] CAER debug: could not score current TF pose (%s)",
+      PKG_NAME.c_str(), ex.what());
   }
 
   if (publish_pose_sets_)
@@ -2190,6 +2664,124 @@ CBGL::siftThroughCAERPanoramic(
     idx.end(),
     [&caers](size_t i1,size_t i2) {return caers[i1] < caers[i2];});
 
+  size_t top_n = top_k_caers_;
+  if (top_n > idx.size())
+    top_n = idx.size();
+
+  std::vector<size_t> sorted_top;
+  sorted_top.reserve(top_n);
+  for (size_t i = 0; i < top_n; i++)
+    sorted_top.push_back(idx[i]);
+
+  std::sort(sorted_top.begin(), sorted_top.end(),
+    [&caers](size_t i1,size_t i2) {return caers[i1] < caers[i2];});
+
+  for (size_t rank = 0; rank < sorted_top.size(); rank++)
+  {
+    const size_t idx_i = sorted_top[rank];
+    const CAERDebugStats& stats = caer_stats[idx_i];
+    const double mean = stats.valid_pairs > 0 ?
+      stats.sum / static_cast<double>(stats.valid_pairs) :
+      std::numeric_limits<double>::infinity();
+    const double precise_mean = stats.valid_pairs > 0 ?
+      stats.precise_sum / static_cast<double>(stats.valid_pairs) :
+      std::numeric_limits<double>::infinity();
+    const double coverage = nrays_ > 0 ?
+      static_cast<double>(stats.valid_pairs) / static_cast<double>(nrays_) :
+      0.0;
+
+    ROS_INFO(
+      "[%s] CAER debug top[%zu]: idx=%zu score=%f sum=%f precise_sum=%f "
+      "mean=%f precise_mean=%f max_abs=%f "
+      "valid_pairs=%u coverage=%.3f scan_valid=%u map_valid=%u "
+      "scan_over_max=%u map_over_max=%u "
+      "scan_negative=%u map_negative=%u overflow_diffs=%u "
+      "scan_inf=%u map_inf=%u scan_nan=%u map_nan=%u "
+      "pose=(%f,%f,%f)",
+      PKG_NAME.c_str(),
+      rank,
+      idx_i,
+      caers[idx_i],
+      stats.sum,
+      stats.precise_sum,
+      mean,
+      precise_mean,
+      stats.max_abs_error,
+      stats.valid_pairs,
+      coverage,
+      stats.valid_scan_rays,
+      stats.valid_map_rays,
+      stats.scan_over_max_rays,
+      stats.map_over_max_rays,
+      stats.scan_negative_rays,
+      stats.map_negative_rays,
+      stats.overflow_diffs,
+      stats.scan_inf_rays,
+      stats.map_inf_rays,
+      stats.scan_nan_rays,
+      stats.map_nan_rays,
+      all_hypotheses[idx_i]->position.x,
+      all_hypotheses[idx_i]->position.y,
+      extractYawFromPose(*all_hypotheses[idx_i]));
+  }
+
+  if (have_current_pose_score)
+  {
+    size_t current_rank = 1;
+    for (size_t i = 0; i < caers.size(); i++)
+    {
+      if (caers[i] < current_pose_score)
+        current_rank++;
+    }
+
+    const double current_mean = current_pose_stats.valid_pairs > 0 ?
+      current_pose_stats.sum /
+        static_cast<double>(current_pose_stats.valid_pairs) :
+      std::numeric_limits<double>::infinity();
+    const double current_precise_mean = current_pose_stats.valid_pairs > 0 ?
+      current_pose_stats.precise_sum /
+        static_cast<double>(current_pose_stats.valid_pairs) :
+      std::numeric_limits<double>::infinity();
+    const double current_coverage = nrays_ > 0 ?
+      static_cast<double>(current_pose_stats.valid_pairs) /
+        static_cast<double>(nrays_) :
+      0.0;
+
+    ROS_INFO(
+      "[%s] CAER debug current_tf: rank=%zu/%zu score=%f sum=%f "
+      "precise_sum=%f mean=%f precise_mean=%f max_abs=%f "
+      "valid_pairs=%u coverage=%.3f scan_valid=%u map_valid=%u "
+      "scan_over_max=%u map_over_max=%u "
+      "scan_negative=%u map_negative=%u overflow_diffs=%u "
+      "scan_inf=%u map_inf=%u scan_nan=%u map_nan=%u "
+      "pose=(%f,%f,%f)",
+      PKG_NAME.c_str(),
+      current_rank,
+      caers.size(),
+      current_pose_score,
+      current_pose_stats.sum,
+      current_pose_stats.precise_sum,
+      current_mean,
+      current_precise_mean,
+      current_pose_stats.max_abs_error,
+      current_pose_stats.valid_pairs,
+      current_coverage,
+      current_pose_stats.valid_scan_rays,
+      current_pose_stats.valid_map_rays,
+      current_pose_stats.scan_over_max_rays,
+      current_pose_stats.map_over_max_rays,
+      current_pose_stats.scan_negative_rays,
+      current_pose_stats.map_negative_rays,
+      current_pose_stats.overflow_diffs,
+      current_pose_stats.scan_inf_rays,
+      current_pose_stats.map_inf_rays,
+      current_pose_stats.scan_nan_rays,
+      current_pose_stats.map_nan_rays,
+      current_pose_best->position.x,
+      current_pose_best->position.y,
+      extractYawFromPose(*current_pose_best));
+  }
+
 
   /* The top p% of lowest caers in hypotheses */
   std::vector<geometry_msgs::Pose::Ptr> caer_best_particles;
@@ -2207,6 +2799,30 @@ CBGL::startSignalService(
   std_srvs::Empty::Request& req,
   std_srvs::Empty::Response& res)
 {
+  return startSignalForSource(RAW_SCAN);
+}
+
+/*******************************************************************************
+ * @brief User calls this service and cbgl functionality is executed using the
+ * known scan source.
+*/
+  bool
+CBGL::startKnownSignalService(
+  std_srvs::Empty::Request& req,
+  std_srvs::Empty::Response& res)
+{
+  return startSignalForSource(KNOWN_SCAN);
+}
+
+/*******************************************************************************
+ * @brief Starts CBGL using the requested scan source.
+ * @param[in] source [const ScanSource&] The scan source to use
+ * @return [bool] True if the start signal was accepted, false otherwise
+*/
+  bool
+CBGL::startSignalForSource(
+  const ScanSource& source)
+{
   while (received_start_signal_)
     ros::Duration(1).sleep();
 
@@ -2216,8 +2832,19 @@ CBGL::startSignalService(
     return false;
   }
 
+  if (source == KNOWN_SCAN && !received_known_scan_)
+  {
+    ROS_WARN("[%s] Known scan not received yet, returning ...",
+      PKG_NAME.c_str());
+    return false;
+  }
+
+  requested_scan_source_ = source;
+  received_scan_ = false;
+
   ROS_INFO("--------------------------------------------------------------------------");
-  ROS_INFO("[%s] Initializing with uniform distribution over map", PKG_NAME.c_str());
+  ROS_INFO("[%s] Initializing with uniform distribution over map using %s scan",
+    PKG_NAME.c_str(), scanSourceName(source));
   pf_init_model(pf_hyp_, (pf_init_model_fn_t)CBGL::uniformPoseGenerator,
     (void *)map_hyp_);
 
