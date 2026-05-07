@@ -144,8 +144,8 @@
 
 산출물:
 
-- `docs/plans/YYYY-MM-DD_feature-name-plan.md`
-- `docs/features/YYYY-MM-DD_feature-name.md`
+- `docs/plans/YYYY-MM-DD_HHMM_feature-name-plan.md`
+- `docs/features/YYYY-MM-DD_HHMM_feature-name.md`
 - 사용자 요청, 요구사항, 구현 내용, 검증 결과, 후속 작업 기록
 
 ## 기능 개발 흐름
@@ -184,11 +184,14 @@
 docs/templates/task-plan.md
 ```
 
-파일 이름은 날짜와 기능명을 포함한다.
+파일 이름은 날짜, 시분, 기능명을 포함한다. 시각은 로컬 작업 환경 기준 24시간 `HHMM` 형식을 사용한다.
 
 ```text
-docs/plans/YYYY-MM-DD_feature-name-plan.md
+docs/plans/YYYY-MM-DD_HHMM_feature-name-plan.md
+docs/features/YYYY-MM-DD_HHMM_feature-name.md
 ```
+
+기존 날짜-only 문서는 링크 안정성을 위해 유지하고, 새 문서부터 timestamp 파일명 규칙을 적용한다.
 
 ## CBGL 알고리즘 변경 특별 규칙
 

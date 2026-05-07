@@ -35,10 +35,11 @@
 
 ## 문서화 계획
 
-- 기능 결과 문서:
+- 작업 계획 문서: `docs/plans/YYYY-MM-DD_HHMM_feature-name-plan.md`
+- 기능 결과 문서: `docs/features/YYYY-MM-DD_HHMM_feature-name.md`
 - 운영 문서 갱신:
 
 ## 승인 상태
 
 - 사용자 승인 문구:
-- 승인 시각:
+- 승인 시각: YYYY-MM-DD HH:MM
