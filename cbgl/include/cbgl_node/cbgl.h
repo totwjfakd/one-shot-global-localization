@@ -217,7 +217,10 @@ class CBGL
     bool normalizeRangeMaxForCAER(
       const float& range,
       float& normalized_range) const;
-    bool isKnownScanRangeForCAER(const float& range) const;
+    bool isKnownScanUnknownObstacleMarker(const float& range) const;
+    bool normalizeKnownScanRangeForCAER(
+      const float& range,
+      float& normalized_range) const;
     bool prepareCAERRangePair(
       const float& scan_range,
       const float& map_range,

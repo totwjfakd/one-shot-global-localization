@@ -261,15 +261,27 @@ CBGL::normalizeRangeMaxForCAER(
 }
 
 /*******************************************************************************
- * @brief True when a known scan beam should contribute to CAER.
+ * @brief True when a known scan beam marks a removed unknown obstacle.
  */
   bool
-CBGL::isKnownScanRangeForCAER(
+CBGL::isKnownScanUnknownObstacleMarker(
   const float& range) const
 {
-  const float max_range = caerMaxRange();
+  return range == -1.0f;
+}
 
-  return range == range && range > 0.0 && range <= max_range;
+/*******************************************************************************
+ * @brief Converts known scan no-hit values while skipping only unknown markers.
+ */
+  bool
+CBGL::normalizeKnownScanRangeForCAER(
+  const float& range,
+  float& normalized_range) const
+{
+  if (isKnownScanUnknownObstacleMarker(range))
+    return false;
+
+  return normalizeRangeMaxForCAER(range, normalized_range);
 }
 
 /*******************************************************************************
@@ -284,10 +296,8 @@ CBGL::prepareCAERRangePair(
 {
   if (requested_scan_source_ == KNOWN_SCAN)
   {
-    if (!isKnownScanRangeForCAER(scan_range))
+    if (!normalizeKnownScanRangeForCAER(scan_range, normalized_scan_range))
       return false;
-
-    normalized_scan_range = scan_range;
   }
   else if (!normalizeRangeMaxForCAER(scan_range, normalized_scan_range))
     return false;
@@ -338,7 +348,7 @@ CBGL::caerDebugStats(
     float normalized_scan_range;
     float normalized_map_range;
     const bool sr_valid = requested_scan_source_ == KNOWN_SCAN ?
-      isKnownScanRangeForCAER(sr[i]) :
+      normalizeKnownScanRangeForCAER(sr[i], normalized_scan_range) :
       normalizeRangeMaxForCAER(sr[i], normalized_scan_range);
     const bool sv_valid =
       normalizeRangeMaxForCAER(sv[i], normalized_map_range);
@@ -2070,13 +2080,8 @@ CBGL::storeScan(
     float& range = processed_scan->ranges[i];
     if (range != range || range > processed_scan->range_max)
     {
-      if (source == RAW_SCAN)
-        range = processed_scan->range_max;
-      else
-        range = std::numeric_limits<float>::infinity();
-
-      if (source == RAW_SCAN && range >= processed_scan->range_min &&
-        range > 0.0)
+      range = processed_scan->range_max;
+      if (range >= processed_scan->range_min && range > 0.0)
         has_valid_range = true;
       continue;
     }
@@ -2142,8 +2147,41 @@ CBGL::storeScan(
 
   /* Remove garbage measurements if lowest measured range <= min sensor range */
   if (latest_world_scan_min_range_now <= processed_scan->range_min)
-    processed_scan->ranges = interpolateRanges(processed_scan->ranges,
-      processed_scan->range_min);
+  {
+    if (source == KNOWN_SCAN)
+    {
+      std::vector<float> ranges_to_interpolate = processed_scan->ranges;
+      std::vector<char> unknown_marker_mask(processed_scan->ranges.size(), 0);
+      bool has_interpolatable_garbage = false;
+
+      for (unsigned int i = 0; i < processed_scan->ranges.size(); i++)
+      {
+        if (isKnownScanUnknownObstacleMarker(processed_scan->ranges[i]))
+        {
+          unknown_marker_mask[i] = 1;
+          ranges_to_interpolate[i] = processed_scan->range_max;
+        }
+        else if (processed_scan->ranges[i] <= processed_scan->range_min)
+          has_interpolatable_garbage = true;
+      }
+
+      if (has_interpolatable_garbage)
+      {
+        processed_scan->ranges = interpolateRanges(ranges_to_interpolate,
+          processed_scan->range_min);
+        for (unsigned int i = 0; i < processed_scan->ranges.size(); i++)
+        {
+          if (unknown_marker_mask[i])
+            processed_scan->ranges[i] = -1.0f;
+        }
+      }
+    }
+    else
+    {
+      processed_scan->ranges = interpolateRanges(processed_scan->ranges,
+        processed_scan->range_min);
+    }
+  }
 
   if (source == KNOWN_SCAN)
   {
