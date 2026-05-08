@@ -95,6 +95,7 @@ bool tf_msg_lidar_base_received = false;
 // relocalization services
 ros::ServiceServer relocalization_server;
 ros::ServiceServer relocalization_simple_server;
+ros::ServiceServer relocalization_simple_known_server;
 ros::ServiceServer get_candidates_server;
 ros::ServiceServer score_pose_server;
 // relocalization client and publisher
@@ -134,8 +135,9 @@ bool update_lidar_base_transform(const ros::Duration &timeout)
     }
 }
 
-bool relocalization_request_callback(relocalization_toolbox_msgs::relocalization_request::Request &req,
-                                     relocalization_toolbox_msgs::relocalization_request::Response &res)
+bool relocalization_request_callback_with_scan_topic(relocalization_toolbox_msgs::relocalization_request::Request &req,
+                                                     relocalization_toolbox_msgs::relocalization_request::Response &res,
+                                                     const string &scan_topic)
 {
     bool ret = false;
 
@@ -151,7 +153,7 @@ bool relocalization_request_callback(relocalization_toolbox_msgs::relocalization
     }
     else if (req.scan_mode == req.MODE_FROM_TOPIC)
     {
-        auto scan_data_ptr = ros::topic::waitForMessage<sensor_msgs::LaserScan>("scan");
+        auto scan_data_ptr = ros::topic::waitForMessage<sensor_msgs::LaserScan>(scan_topic);
 
         if (scan_data_ptr)
         {
@@ -283,6 +285,12 @@ bool relocalization_request_callback(relocalization_toolbox_msgs::relocalization
     return ret;
 }
 
+bool relocalization_request_callback(relocalization_toolbox_msgs::relocalization_request::Request &req,
+                                     relocalization_toolbox_msgs::relocalization_request::Response &res)
+{
+    return relocalization_request_callback_with_scan_topic(req, res, "scan");
+}
+
 bool relocalization_simple_request_callback(std_srvs::Empty::Request &req,
                                             std_srvs::Empty::Response &res)
 {
@@ -291,6 +299,16 @@ bool relocalization_simple_request_callback(std_srvs::Empty::Request &req,
     srv.request.scan_mode = srv.request.MODE_FROM_TOPIC;
 
     return relocalization_request_callback(srv.request, srv.response);
+}
+
+bool relocalization_simple_request_known_callback(std_srvs::Empty::Request &req,
+                                                  std_srvs::Empty::Response &res)
+{
+    relocalization_toolbox_msgs::relocalization_request srv;
+    srv.request.map_mode = srv.request.MODE_FROM_TOPIC;
+    srv.request.scan_mode = srv.request.MODE_FROM_TOPIC;
+
+    return relocalization_request_callback_with_scan_topic(srv.request, srv.response, "scan_known");
 }
 
 bool get_candidates_request_callback(relocalization_toolbox_msgs::get_candidates_request::Request &req,
@@ -708,6 +726,7 @@ int main(int argc, char **argv)
     // initialize services and publishers
     relocalization_server = node_handle.advertiseService("relocalization_request", relocalization_request_callback);
     relocalization_simple_server = node_handle.advertiseService("relocalization_simple_request", relocalization_simple_request_callback);
+    relocalization_simple_known_server = node_handle.advertiseService("relocalization_simple_request_known", relocalization_simple_request_known_callback);
     get_candidates_server = node_handle.advertiseService("get_relocalization_candidates_request", get_candidates_request_callback);
     score_pose_server = node_handle.advertiseService("score_relocalization_pose", score_pose_request_callback);
     set_init_pose_client = node_handle.serviceClient<relocalization_toolbox_msgs::initial_pose_request>("set_init_pose_request");
